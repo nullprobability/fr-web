@@ -1,34 +1,23 @@
-# Vite + React + Tailwind + TypeScript Template
+# tf - image macro maker
 
-A minimal, high-performance starter template for modern web development.
+Create image macros (meme-style images with overlaid text) and export them as PNGs.
 
 ## Features
 
-- **Vite 6**: Next-generation frontend tooling.
-- **React 18**: The library for web and native user interfaces.
-- **TypeScript**: Typed superset of JavaScript.
-- **Tailwind CSS 4**: A utility-first CSS framework (Experimental v4 with Vite plugin).
-- **ESLint**: Pluggable JavaScript linter.
-- **Apple-Style UI**: Includes a premium, dark-mode landing page example.
+- **Image upload** — accepts PNG, JPG, WebP files.
+- **Fit modes** — cover, contain, or stretch the image on a square canvas.
+- **Darken overlay & blur** — improve text readability or add atmosphere.
+- **Multi-line caption** — with auto word-wrap and case transforms (upper/lower/keep).
+- **Typography controls** — font family (custom Upright, Arial, Times New Roman), weight, size, line height, outline/stroke size, text & outline color pickers, alignment.
+- **Drag to reposition** — grab and drag text anywhere on the canvas.
+- **Position presets** — 4×2 grid for quick placement.
+- **Fine-tune X/Y sliders** — pixel-precise positioning.
+- **Export PNG** — at 1080×1080, 1440×1440, or 2048×2048 resolution.
 
 ## Getting Started
 
-1.  **Use this template**: Click the "Use this template" button on GitHub or clone the repo.
-2.  **Install dependencies**:
-    ```bash
-    npm install
-    ```
-3.  **Run the dev server**:
-    ```bash
-    npm run dev
-    ```
-4.  **Build for production**:
-    ```bash
-    npm run build
-    ```
-
-## Project Structure
-
-- `src/App.tsx`: Main landing page component.
-- `src/index.css`: Global styles and Tailwind configuration.
-- `vite.config.ts`: Vite configuration with Tailwind plugin.
+```bash
+npm install
+npm run dev
+npm run build
+```
