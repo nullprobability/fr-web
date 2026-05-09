@@ -2,6 +2,14 @@
 
 Create image macros (meme-style images with overlaid text) and export them as PNGs.
 
+## Live site
+
+GitHub Pages URL after deployment:
+
+```text
+https://nullprobability.github.io/fr-web/
+```
+
 ## Features
 
 - **Image upload** — accepts PNG, JPG, WebP files.
@@ -21,3 +29,13 @@ npm install
 npm run dev
 npm run build
 ```
+
+## GitHub Pages
+
+This repository is configured for GitHub Pages with:
+
+- `vite.config.ts` base set to `/fr-web/`
+- `.github/workflows/deploy.yml` building and deploying `dist`
+- `public/.nojekyll` included for static hosting compatibility
+
+In GitHub, set **Settings → Pages → Build and deployment → Source** to **GitHub Actions**.
