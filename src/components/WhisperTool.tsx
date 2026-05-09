@@ -678,57 +678,13 @@ export default function WhisperTool() {
   ];
 
   return (
-    <main className="min-h-screen lg:h-screen lg:overflow-hidden bg-zinc-950 text-zinc-200 antialiased selection:bg-white/10">
+    <main className="h-screen overflow-hidden bg-zinc-950 text-zinc-200 antialiased selection:bg-white/10">
       {/* Subtle grain overlay */}
       <div className="fixed inset-0 pointer-events-none opacity-[0.015]" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E")` }} />
 
-      <div className="flex flex-col lg:flex-row h-screen">
-        {/* ─── Sidebar ─── */}
-        <aside className="w-full lg:w-[340px] xl:w-[360px] shrink-0 flex flex-col border-r border-zinc-900 bg-zinc-950 lg:h-screen max-h-[60vh] lg:max-h-none">
-          {/* Header */}
-          <div className="px-5 pt-5 pb-4 flex items-center justify-between">
-            <div>
-              <h1 className="text-base font-bold tracking-tight text-white">tf</h1>
-              <p className="text-[10px] text-zinc-600 mt-0.5 tracking-wide">image macro maker</p>
-            </div>
-            <div className="flex items-center gap-1 text-[10px] text-zinc-700">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/60" />
-              <span>{image ? 'Ready' : 'No image'}</span>
-            </div>
-          </div>
-
-          {/* Tab bar */}
-          <div className="px-4">
-            <div className="flex gap-px bg-zinc-900 rounded-lg p-px">
-              {TABS.map((tab) => (
-                <button
-                  key={tab.key}
-                  onClick={() => setActivePanel(tab.key)}
-                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-[7px] text-[11px] font-medium transition-all duration-150 ${
-                    activePanel === tab.key
-                      ? 'bg-zinc-800 text-white shadow-sm'
-                      : 'text-zinc-600 hover:text-zinc-400'
-                  }`}
-                >
-                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d={tab.icon} />
-                  </svg>
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Panel content */}
-          <div className="flex-1 overflow-y-auto px-5 py-5 scrollbar-thin">
-            {activePanel === 'image' && renderImagePanel()}
-            {activePanel === 'text' && renderTextPanel()}
-            {activePanel === 'export' && renderExportPanel()}
-          </div>
-        </aside>
-
-        {/* ─── Canvas area ─── */}
-        <div className="flex-1 flex items-center justify-center p-3 lg:p-8 bg-zinc-950 relative overflow-hidden">
+      <div className="relative h-full">
+        {/* ─── Canvas: full screen on mobile, right panel on desktop ─── */}
+        <div className="h-full lg:ml-[340px] xl:ml-[360px] flex items-center justify-center p-3 lg:p-8 relative overflow-hidden">
           {/* Checkerboard background */}
           <div className="absolute inset-0 opacity-[0.03]" style={{
             backgroundImage: 'linear-gradient(45deg, #fff 25%, transparent 25%), linear-gradient(-45deg, #fff 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #fff 75%), linear-gradient(-45deg, transparent 75%, #fff 75%)',
@@ -738,7 +694,6 @@ export default function WhisperTool() {
 
           <div className="relative w-full max-w-[640px]">
             <div className="relative group">
-              {/* Canvas shadow/glow */}
               <div className="absolute -inset-1 rounded-3xl bg-gradient-to-b from-zinc-800/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
 
               <canvas
@@ -781,6 +736,48 @@ export default function WhisperTool() {
             </div>
           </div>
         </div>
+
+        {/* ─── Sidebar: fixed left on mobile as floating pane, static on desktop ─── */}
+        <aside className="fixed inset-x-0 bottom-0 lg:inset-y-0 lg:left-0 lg:right-auto lg:bottom-auto w-full lg:w-[340px] xl:w-[360px] flex flex-col bg-zinc-950/95 lg:bg-zinc-950 backdrop-blur-xl lg:backdrop-blur-none border-t lg:border-t-0 lg:border-r border-zinc-800/60 lg:border-zinc-900 rounded-t-2xl lg:rounded-none max-h-[70vh] lg:max-h-none z-30 floating-pane-safe">
+          {/* Header */}
+          <div className="px-5 pt-4 pb-3 lg:pt-5 lg:pb-4 flex items-center justify-between shrink-0">
+            <div className="flex items-center gap-3">
+              <h1 className="text-base font-bold tracking-tight text-white">tf</h1>
+              <span className="text-[10px] text-zinc-600 tracking-wide">image macro maker</span>
+            </div>
+            {/* Drag handle on mobile */}
+            <div className="lg:hidden w-8 h-1 rounded-full bg-zinc-800 absolute top-2 left-1/2 -translate-x-1/2" />
+          </div>
+
+          {/* Tab bar */}
+          <div className="px-4 shrink-0">
+            <div className="flex gap-px bg-zinc-900 rounded-lg p-px">
+              {TABS.map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setActivePanel(tab.key)}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-[7px] text-[11px] font-medium transition-all duration-150 ${
+                    activePanel === tab.key
+                      ? 'bg-zinc-800 text-white shadow-sm'
+                      : 'text-zinc-600 hover:text-zinc-400'
+                  }`}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d={tab.icon} />
+                  </svg>
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Panel content */}
+          <div className="flex-1 overflow-y-auto px-5 py-5 scrollbar-thin">
+            {activePanel === 'image' && renderImagePanel()}
+            {activePanel === 'text' && renderTextPanel()}
+            {activePanel === 'export' && renderExportPanel()}
+          </div>
+        </aside>
       </div>
     </main>
   );

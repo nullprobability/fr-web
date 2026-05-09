@@ -17,12 +17,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background: #09090b;
-}
-
-@media (min-width: 1024px) {
-  body {
-    overflow: hidden;
-  }
+  overflow: hidden;
 }
 
 /* ── Scrollbar ── */
@@ -137,4 +132,11 @@ select option {
 /* ── Transitions ── */
 * {
   -webkit-tap-highlight-color: transparent;
+}
+
+/* ── Safe area for floating pane on notched devices ── */
+@supports (padding-bottom: env(safe-area-inset-bottom)) {
+  .floating-pane-safe {
+    padding-bottom: env(safe-area-inset-bottom);
+  }
 }
