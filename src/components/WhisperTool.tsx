@@ -1204,7 +1204,7 @@ export default function WhisperTool() {
         </div>
 
         <aside
-          className="fixed inset-x-0 bottom-0 lg:inset-y-0 lg:left-0 lg:right-auto lg:bottom-auto w-full lg:w-[340px] xl:w-[360px] flex flex-col bg-zinc-950/95 lg:bg-zinc-950 backdrop-blur-xl lg:backdrop-blur-none border-t lg:border-t-0 lg:border-r border-zinc-800/60 lg:border-zinc-900 rounded-t-2xl lg:rounded-none z-30 floating-pane-safe"
+          className="fixed inset-x-0 bottom-0 lg:inset-y-0 lg:left-0 lg:right-auto lg:bottom-auto w-full lg:w-[340px] xl:w-[360px] flex flex-col bg-zinc-950/95 lg:bg-zinc-950 backdrop-blur-xl lg:backdrop-blur-none border-t lg:border-t-0 lg:border-r border-zinc-800/60 lg:border-zinc-900 rounded-t-2xl lg:rounded-none z-30 floating-pane-safe lg:!h-full"
           style={{ height: `${paneHeight}vh` }}
         >
           <div
@@ -1246,6 +1246,12 @@ export default function WhisperTool() {
             {activePanel === 'image' && renderImagePanel()}
             {activePanel === 'text' && renderTextPanel()}
             {activePanel === 'export' && renderExportPanel()}
+          </div>
+
+          {/* Footer */}
+          <div className="shrink-0 px-5 py-3 border-t border-zinc-900 flex items-center justify-between">
+            <span className="text-[10px] text-zinc-700">tf</span>
+            <span className="text-[10px] text-zinc-800 lg:hidden">drag to resize</span>
           </div>
         </aside>
       </div>
