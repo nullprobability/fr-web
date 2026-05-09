@@ -175,6 +175,7 @@ export default function WhisperTool() {
   const recordingRef = useRef(false);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const audioDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
+  const drawFrameRef = useRef<((ctx: CanvasRenderingContext2D, size: number) => void) | null>(null);
 
   const media = image || video;
 
@@ -277,20 +278,41 @@ export default function WhisperTool() {
     setVideoMuted(video.muted);
   }, [video]);
 
-  /* ── Video render loop ── */
+  /* ── Video preview render loop (draws directly, no React lag) ── */
   useEffect(() => {
     if (!video) return;
 
+    let lastUiUpdate = 0;
+
     const tick = () => {
-      if (!video.paused) {
+      // Draw current frame directly to canvas
+      const canvas = canvasRef.current;
+      if (canvas && drawFrameRef.current) {
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          const size = exportSize;
+          if (canvas.width !== size || canvas.height !== size) {
+            canvas.width = size;
+            canvas.height = size;
+          }
+          drawFrameRef.current(ctx, size);
+        }
+      }
+
+      // Throttle slider UI update to ~12fps
+      const now = performance.now();
+      if (now - lastUiUpdate > 80) {
+        lastUiUpdate = now;
         setVideoCurrentTime(video.currentTime);
       }
+
       animFrameRef.current = requestAnimationFrame(tick);
     };
+
     animFrameRef.current = requestAnimationFrame(tick);
 
     return () => cancelAnimationFrame(animFrameRef.current);
-  }, [video]);
+  }, [video, exportSize]);
 
   /* ── Load built-in Upright font ── */
   useEffect(() => {
@@ -427,7 +449,7 @@ export default function WhisperTool() {
     exportSize, fitMode, darken, imageOffsetX, imageOffsetY, imageZoom, buildFilter,
   ]);
 
-  /* ── Canvas renderer (preview) ── */
+  /* ── Canvas renderer (preview, for non-video redraws) ── */
   const draw = useCallback(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -443,7 +465,16 @@ export default function WhisperTool() {
     drawFrame(ctx, size);
   }, [drawFrame, exportSize]);
 
-  useEffect(() => { draw(); }, [draw]);
+  // Keep ref in sync so the rAF loop always has the latest drawFrame
+  useEffect(() => {
+    drawFrameRef.current = drawFrame;
+  }, [drawFrame]);
+
+  // Redraw on settings change (but not during video playback — rAF loop handles that)
+  useEffect(() => {
+    if (video) return; // video rAF loop handles it
+    draw();
+  }, [draw, video]);
 
   /* ── Video export (with audio) ── */
   const handleExportVideo = useCallback(() => {
