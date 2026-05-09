@@ -8,6 +8,7 @@ type ExportSize = 1080 | 1440 | 2048;
 type FitMode = 'cover' | 'contain' | 'stretch';
 type TextAlign = 'left' | 'center' | 'right';
 type CaseMode = 'keep' | 'uppercase' | 'lowercase';
+type TemplateMode = 'whisper' | 'classic';
 type PositionPreset =
   | 'top' | 'middle' | 'bottom' | 'center'
   | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
@@ -37,6 +38,7 @@ const EXPORT_SIZES: ExportSize[] = [1080, 1440, 2048];
 const FIT_MODES: FitMode[] = ['cover', 'contain', 'stretch'];
 const CASE_MODES: CaseMode[] = ['keep', 'uppercase', 'lowercase'];
 const TEXT_ALIGNS: TextAlign[] = ['left', 'center', 'right'];
+const TEMPLATE_MODES: TemplateMode[] = ['whisper', 'classic'];
 
 const DEFAULT_FONT = 'Upright';
 const PANE_MIN_VH = 25;
@@ -152,6 +154,9 @@ export default function WhisperTool() {
   const [grayscale, setGrayscale] = useState(0);
   const [invert, setInvert] = useState(0);
   const [hueRotate, setHueRotate] = useState(0);
+  const [template, setTemplate] = useState<TemplateMode>('whisper');
+  const [classicBarHeight, setClassicBarHeight] = useState(35);
+  const [classicBarColor, setClassicBarColor] = useState('#ffffff');
   const [fontReady, setFontReady] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isDraggingImage, setIsDraggingImage] = useState(false);
@@ -178,6 +183,30 @@ export default function WhisperTool() {
   const drawFrameRef = useRef<((ctx: CanvasRenderingContext2D, size: number) => void) | null>(null);
 
   const media = image || video;
+
+  /* ── Template presets ── */
+  const applyTemplate = useCallback((t: TemplateMode) => {
+    setTemplate(t);
+    if (t === 'classic') {
+      setTextColor('#000000');
+      setOutlineSize(0);
+      setFontFamily('Arial');
+      setFontWeight(700);
+      setFontSize(60);
+      setCaseMode('uppercase');
+      setTextAlign('center');
+      setDarken(0);
+    } else {
+      setTextColor('#ffffff');
+      setOutlineSize(12);
+      setFontFamily(DEFAULT_FONT);
+      setFontWeight(900);
+      setFontSize(80);
+      setCaseMode('uppercase');
+      setTextAlign('center');
+      setDarken(30);
+    }
+  }, []);
 
   /* ── Build CSS filter string ── */
   const buildFilter = useCallback(() => {
@@ -417,36 +446,73 @@ export default function WhisperTool() {
 
     const lineH = fontSize * lineHeight;
     const totalH = lines.length * lineH;
-    const startY = textY - totalH / 2 + lineH / 2;
 
-    let minX: number = size;
-    let maxX: number = 0;
+    if (template === 'classic') {
+      // Classic template: white bar on top with dark text inside
+      const barH = (classicBarHeight / 100) * size;
+      const startY = barH / 2 - totalH / 2 + lineH / 2;
 
-    for (let i = 0; i < lines.length; i++) {
-      const ly = startY + i * lineH;
+      // Draw white bar
+      ctx.fillStyle = classicBarColor;
+      ctx.fillRect(0, 0, size, barH);
 
-      ctx.font = `${fontWeight} ${fontSize}px ${getFontStack(fontFamily)}`;
-      ctx.strokeStyle = outlineColor;
-      ctx.lineWidth = outlineSize;
-      ctx.strokeText(lines[i], textX, ly);
-      ctx.fillStyle = textColor;
-      ctx.fillText(lines[i], textX, ly);
+      // Draw text inside bar
+      let minX: number = size;
+      let maxX: number = 0;
+      const textCenterX = textAlign === 'center' ? size / 2 : textAlign === 'right' ? size * 0.93 : size * 0.07;
 
-      const m = ctx.measureText(lines[i]);
-      let left: number;
-      if (textAlign === 'center') left = textX - m.width / 2;
-      else if (textAlign === 'right') left = textX - m.width;
-      else left = textX;
+      for (let i = 0; i < lines.length; i++) {
+        const ly = startY + i * lineH;
 
-      minX = Math.min(minX, left);
-      maxX = Math.max(maxX, left + m.width);
+        ctx.font = `${fontWeight} ${fontSize}px ${getFontStack(fontFamily)}`;
+        ctx.fillStyle = textColor;
+        ctx.fillText(lines[i], textCenterX, ly);
+
+        const m = ctx.measureText(lines[i]);
+        let left: number;
+        if (textAlign === 'center') left = textCenterX - m.width / 2;
+        else if (textAlign === 'right') left = textCenterX - m.width;
+        else left = textCenterX;
+
+        minX = Math.min(minX, left);
+        maxX = Math.max(maxX, left + m.width);
+      }
+
+      bboxRef.current = { x: minX, y: startY, width: maxX - minX, height: totalH };
+    } else {
+      // Whisper template: text overlaid with outline
+      const startY = textY - totalH / 2 + lineH / 2;
+
+      let minX: number = size;
+      let maxX: number = 0;
+
+      for (let i = 0; i < lines.length; i++) {
+        const ly = startY + i * lineH;
+
+        ctx.font = `${fontWeight} ${fontSize}px ${getFontStack(fontFamily)}`;
+        ctx.strokeStyle = outlineColor;
+        ctx.lineWidth = outlineSize;
+        if (outlineSize > 0) ctx.strokeText(lines[i], textX, ly);
+        ctx.fillStyle = textColor;
+        ctx.fillText(lines[i], textX, ly);
+
+        const m = ctx.measureText(lines[i]);
+        let left: number;
+        if (textAlign === 'center') left = textX - m.width / 2;
+        else if (textAlign === 'right') left = textX - m.width;
+        else left = textX;
+
+        minX = Math.min(minX, left);
+        maxX = Math.max(maxX, left + m.width);
+      }
+
+      bboxRef.current = { x: minX, y: startY, width: maxX - minX, height: totalH };
     }
-
-    bboxRef.current = { x: minX, y: startY, width: maxX - minX, height: totalH };
   }, [
     image, video, caption, fontFamily, fontWeight, fontSize, lineHeight, outlineSize,
     textColor, outlineColor, textAlign, caseMode, textX, textY,
     exportSize, fitMode, darken, imageOffsetX, imageOffsetY, imageZoom, buildFilter,
+    template, classicBarHeight, classicBarColor,
   ]);
 
   /* ── Canvas renderer (preview, for non-video redraws) ── */
@@ -762,11 +828,37 @@ export default function WhisperTool() {
     setImageOffsetX(0);
     setImageOffsetY(0);
     setImageZoom(1);
+    setTemplate('whisper');
+    setClassicBarHeight(35);
+    setClassicBarColor('#ffffff');
   }, [video]);
 
   /* ── Tab content renderers ── */
   const renderImagePanel = () => (
     <div className="space-y-5">
+      <Section title="Template">
+        <div className="flex gap-px rounded-lg overflow-hidden bg-zinc-800/50">
+          {TEMPLATE_MODES.map((t) => (
+            <button
+              key={t}
+              onClick={() => applyTemplate(t)}
+              className={`flex-1 py-2 text-[11px] font-medium tracking-wide transition-all duration-150 capitalize ${
+                template === t
+                  ? 'bg-white text-zinc-950'
+                  : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
+              }`}
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-zinc-600">
+          {template === 'whisper'
+            ? 'Text overlaid on image with outline'
+            : 'White bar on top with dark text'}
+        </p>
+      </Section>
+
       <Section title="Source" compact>
         <label className="block cursor-pointer group">
           <input
@@ -885,6 +977,19 @@ export default function WhisperTool() {
         <Slider label="Invert" value={invert} display={`${invert}%`} min={0} max={100} onChange={setInvert} />
         <Slider label="Hue" value={hueRotate} display={`${hueRotate}\u00B0`} min={0} max={360} onChange={setHueRotate} />
       </Section>
+
+      {template === 'classic' && (
+        <Section title="Classic Bar">
+          <Slider label="Bar Height" value={classicBarHeight} display={`${classicBarHeight}%`} min={10} max={60} onChange={setClassicBarHeight} />
+          <div className="space-y-1.5">
+            <span className="text-[10px] text-zinc-600 font-medium uppercase tracking-wider">Bar Color</span>
+            <div className="relative">
+              <input type="color" value={classicBarColor} onChange={(e) => setClassicBarColor(e.target.value)} className="color-input" />
+              <div className="absolute inset-0 rounded-lg border border-zinc-800 pointer-events-none" />
+            </div>
+          </div>
+        </Section>
+      )}
     </div>
   );
 
@@ -944,21 +1049,23 @@ export default function WhisperTool() {
         <ButtonGroup<TextAlign> options={TEXT_ALIGNS} selected={textAlign} onChange={setTextAlign} labels={ALIGN_LABELS} />
       </Section>
 
-      <Section title="Position">
-        <div className="grid grid-cols-4 gap-px rounded-lg overflow-hidden bg-zinc-800/50">
-          {PRESETS.map((preset) => (
-            <button
-              key={preset}
-              onClick={() => applyPositionPreset(preset)}
-              className="py-2.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors text-xs"
-            >
-              {PRESET_LABELS[preset]}
-            </button>
-          ))}
-        </div>
-        <Slider label="X" value={textX} display={String(textX)} min={0} max={exportSize} onChange={setTextX} />
-        <Slider label="Y" value={textY} display={String(textY)} min={0} max={exportSize} onChange={setTextY} />
-      </Section>
+      {template === 'whisper' && (
+        <Section title="Position">
+          <div className="grid grid-cols-4 gap-px rounded-lg overflow-hidden bg-zinc-800/50">
+            {PRESETS.map((preset) => (
+              <button
+                key={preset}
+                onClick={() => applyPositionPreset(preset)}
+                className="py-2.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors text-xs"
+              >
+                {PRESET_LABELS[preset]}
+              </button>
+            ))}
+          </div>
+          <Slider label="X" value={textX} display={String(textX)} min={0} max={exportSize} onChange={setTextX} />
+          <Slider label="Y" value={textY} display={String(textY)} min={0} max={exportSize} onChange={setTextY} />
+        </Section>
+      )}
     </div>
   );
 
