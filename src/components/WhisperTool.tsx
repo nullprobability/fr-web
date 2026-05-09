@@ -145,6 +145,13 @@ export default function WhisperTool() {
   const [fitMode, setFitMode] = useState<FitMode>('cover');
   const [darken, setDarken] = useState(30);
   const [blur, setBlur] = useState(0);
+  const [brightness, setBrightness] = useState(100);
+  const [contrast, setContrast] = useState(100);
+  const [saturate, setSaturate] = useState(100);
+  const [sepia, setSepia] = useState(0);
+  const [grayscale, setGrayscale] = useState(0);
+  const [invert, setInvert] = useState(0);
+  const [hueRotate, setHueRotate] = useState(0);
   const [fontReady, setFontReady] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [isDraggingImage, setIsDraggingImage] = useState(false);
@@ -154,6 +161,9 @@ export default function WhisperTool() {
   const [activePanel, setActivePanel] = useState<'image' | 'text' | 'export'>('image');
   const [paneHeight, setPaneHeight] = useState(PANE_DEFAULT_VH);
   const [isResizingPane, setIsResizingPane] = useState(false);
+  const [isExportingVideo, setIsExportingVideo] = useState(false);
+  const [videoExportProgress, setVideoExportProgress] = useState(0);
+  const [videoMuted, setVideoMuted] = useState(false);
 
   const dragOffsetRef = useRef({ x: 0, y: 0 });
   const bboxRef = useRef<TextBBox | null>(null);
@@ -162,8 +172,25 @@ export default function WhisperTool() {
   const pinchStartZoomRef = useRef(1);
   const animFrameRef = useRef(0);
   const paneResizeStartRef = useRef({ y: 0, height: 0 });
+  const recordingRef = useRef(false);
+  const audioCtxRef = useRef<AudioContext | null>(null);
+  const audioDestRef = useRef<MediaStreamAudioDestinationNode | null>(null);
 
   const media = image || video;
+
+  /* ── Build CSS filter string ── */
+  const buildFilter = useCallback(() => {
+    const parts: string[] = [];
+    if (blur > 0) parts.push(`blur(${blur}px)`);
+    if (brightness !== 100) parts.push(`brightness(${brightness}%)`);
+    if (contrast !== 100) parts.push(`contrast(${contrast}%)`);
+    if (saturate !== 100) parts.push(`saturate(${saturate}%)`);
+    if (sepia > 0) parts.push(`sepia(${sepia}%)`);
+    if (grayscale > 0) parts.push(`grayscale(${grayscale}%)`);
+    if (invert > 0) parts.push(`invert(${invert}%)`);
+    if (hueRotate !== 0) parts.push(`hue-rotate(${hueRotate}deg)`);
+    return parts.length > 0 ? parts.join(' ') : 'none';
+  }, [blur, brightness, contrast, saturate, sepia, grayscale, invert, hueRotate]);
 
   /* ── Media upload ── */
   const handleMediaUpload = useCallback(
@@ -176,11 +203,31 @@ export default function WhisperTool() {
         const vid = document.createElement('video');
         vid.src = url;
         vid.crossOrigin = 'anonymous';
-        vid.muted = true;
+        vid.muted = false;
         vid.loop = true;
         vid.playsInline = true;
         vid.preload = 'auto';
         vid.onloadeddata = () => {
+          // Clean up old audio context
+          if (audioCtxRef.current) {
+            audioCtxRef.current.close().catch(() => {});
+            audioCtxRef.current = null;
+            audioDestRef.current = null;
+          }
+
+          // Set up audio routing for export
+          try {
+            const actx = new AudioContext();
+            const source = actx.createMediaElementSource(vid);
+            const dest = actx.createMediaStreamDestination();
+            source.connect(dest);
+            source.connect(actx.destination);
+            audioCtxRef.current = actx;
+            audioDestRef.current = dest;
+          } catch {
+            console.warn('Could not set up audio context for export');
+          }
+
           setImage(null);
           setVideo(vid);
           setVideoDuration(vid.duration);
@@ -222,6 +269,12 @@ export default function WhisperTool() {
     if (!video) return;
     video.currentTime = time;
     setVideoCurrentTime(time);
+  }, [video]);
+
+  const toggleMute = useCallback(() => {
+    if (!video) return;
+    video.muted = !video.muted;
+    setVideoMuted(video.muted);
   }, [video]);
 
   /* ── Video render loop ── */
@@ -270,27 +323,15 @@ export default function WhisperTool() {
     [fontSize, exportSize],
   );
 
-  /* ── Canvas renderer ── */
-  const draw = useCallback(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    const size = exportSize;
-
-    if (canvas.width !== size) {
-      canvas.width = size;
-      canvas.height = size;
-    }
-
+  /* ── Core draw: renders current frame to a given canvas context ── */
+  const drawFrame = useCallback((ctx: CanvasRenderingContext2D, size: number) => {
     ctx.fillStyle = '#0a0a0a';
     ctx.fillRect(0, 0, size, size);
 
     const src = image || video;
     if (src) {
       ctx.save();
-      if (blur > 0) ctx.filter = `blur(${blur}px)`;
+      ctx.filter = buildFilter();
 
       const ox = imageOffsetX;
       const oy = imageOffsetY;
@@ -383,10 +424,126 @@ export default function WhisperTool() {
   }, [
     image, video, caption, fontFamily, fontWeight, fontSize, lineHeight, outlineSize,
     textColor, outlineColor, textAlign, caseMode, textX, textY,
-    exportSize, fitMode, darken, blur, imageOffsetX, imageOffsetY, imageZoom,
+    exportSize, fitMode, darken, imageOffsetX, imageOffsetY, imageZoom, buildFilter,
   ]);
 
+  /* ── Canvas renderer (preview) ── */
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const size = exportSize;
+    if (canvas.width !== size) {
+      canvas.width = size;
+      canvas.height = size;
+    }
+
+    drawFrame(ctx, size);
+  }, [drawFrame, exportSize]);
+
   useEffect(() => { draw(); }, [draw]);
+
+  /* ── Video export (with audio) ── */
+  const handleExportVideo = useCallback(() => {
+    if (!video || !canvasRef.current || recordingRef.current) return;
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const size = exportSize;
+    canvas.width = size;
+    canvas.height = size;
+
+    recordingRef.current = true;
+    setIsExportingVideo(true);
+    setVideoExportProgress(0);
+
+    // Pause preview playback
+    video.pause();
+    setVideoPlaying(false);
+
+    // Seek to start
+    video.currentTime = 0;
+
+    // Build combined stream: canvas video + audio from video element
+    const canvasStream = canvas.captureStream(30);
+    const tracks: MediaStreamTrack[] = [...canvasStream.getVideoTracks()];
+
+    // Add audio track if available
+    if (audioDestRef.current) {
+      const audioTracks = audioDestRef.current.stream.getAudioTracks();
+      if (audioTracks.length > 0) {
+        tracks.push(audioTracks[0]);
+      }
+    }
+
+    const combinedStream = new MediaStream(tracks);
+
+    // Pick best available codec
+    let mimeType = 'video/webm';
+    if (MediaRecorder.isTypeSupported('video/webm;codecs=vp9,opus')) {
+      mimeType = 'video/webm;codecs=vp9,opus';
+    } else if (MediaRecorder.isTypeSupported('video/webm;codecs=vp8,opus')) {
+      mimeType = 'video/webm;codecs=vp8,opus';
+    } else if (MediaRecorder.isTypeSupported('video/mp4')) {
+      mimeType = 'video/mp4';
+    }
+
+    const chunks: Blob[] = [];
+    const recorder = new MediaRecorder(combinedStream, {
+      mimeType,
+      videoBitsPerSecond: 8_000_000,
+      audioBitsPerSecond: 192_000,
+    });
+
+    recorder.ondataavailable = (e) => {
+      if (e.data.size > 0) chunks.push(e.data);
+    };
+
+    recorder.onstop = () => {
+      recordingRef.current = false;
+      setIsExportingVideo(false);
+      setVideoExportProgress(100);
+
+      const ext = mimeType.includes('mp4') ? 'mp4' : 'webm';
+      const blob = new Blob(chunks, { type: mimeType });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `tf-export-${Date.now()}.${ext}`;
+      a.click();
+      URL.revokeObjectURL(url);
+    };
+
+    // Wait for seek, then start
+    video.onseeked = () => {
+      video.onseeked = null;
+
+      recorder.start();
+
+      const renderLoop = () => {
+        if (!recordingRef.current) return;
+
+        drawFrame(ctx, size);
+        setVideoExportProgress(Math.min(99, (video.currentTime / videoDuration) * 100));
+
+        if (video.currentTime >= videoDuration - 0.05) {
+          drawFrame(ctx, size);
+          recorder.stop();
+          video.currentTime = 0;
+          return;
+        }
+
+        requestAnimationFrame(renderLoop);
+      };
+
+      video.play();
+      renderLoop();
+    };
+  }, [video, exportSize, videoDuration, drawFrame]);
 
   /* ── Zoom: wheel (PC) and pinch (mobile) ── */
   useEffect(() => {
@@ -537,11 +694,17 @@ export default function WhisperTool() {
       video.pause();
       URL.revokeObjectURL(video.src);
     }
+    if (audioCtxRef.current) {
+      audioCtxRef.current.close().catch(() => {});
+      audioCtxRef.current = null;
+      audioDestRef.current = null;
+    }
     setImage(null);
     setVideo(null);
     setVideoPlaying(false);
     setVideoCurrentTime(0);
     setVideoDuration(0);
+    setVideoMuted(false);
     setCaption('');
     setFontFamily(DEFAULT_FONT);
     setFontWeight(900);
@@ -558,6 +721,13 @@ export default function WhisperTool() {
     setFitMode('cover');
     setDarken(30);
     setBlur(0);
+    setBrightness(100);
+    setContrast(100);
+    setSaturate(100);
+    setSepia(0);
+    setGrayscale(0);
+    setInvert(0);
+    setHueRotate(0);
     setImageOffsetX(0);
     setImageOffsetY(0);
     setImageZoom(1);
@@ -604,13 +774,12 @@ export default function WhisperTool() {
         </label>
       </Section>
 
-      {/* Video playback controls */}
       {video && (
         <Section title="Playback">
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <button
               onClick={toggleVideoPlay}
-              className="w-9 h-9 rounded-lg bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center transition-colors"
+              className="w-9 h-9 rounded-lg bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center transition-colors shrink-0"
             >
               {videoPlaying ? (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="text-white">
@@ -634,10 +803,28 @@ export default function WhisperTool() {
                 className="slider"
               />
             </div>
-            <span className="text-[10px] text-zinc-500 font-mono tabular-nums w-14 text-right">
-              {videoCurrentTime.toFixed(1)}s
-            </span>
+            <button
+              onClick={toggleMute}
+              className="w-9 h-9 rounded-lg bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center transition-colors shrink-0"
+              title={videoMuted ? 'Unmute' : 'Mute'}
+            >
+              {videoMuted ? (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                  <line x1="23" y1="9" x2="17" y2="15" />
+                  <line x1="17" y1="9" x2="23" y2="15" />
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="text-zinc-400">
+                  <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+                  <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
+                </svg>
+              )}
+            </button>
           </div>
+          <p className="text-[10px] text-zinc-600">
+            {videoCurrentTime.toFixed(1)}s / {videoDuration.toFixed(1)}s
+          </p>
         </Section>
       )}
 
@@ -653,9 +840,19 @@ export default function WhisperTool() {
         </Section>
       )}
 
-      <Section title="Effects">
+      <Section title="Adjust">
+        <Slider label="Brightness" value={brightness} display={`${brightness}%`} min={0} max={200} onChange={setBrightness} />
+        <Slider label="Contrast" value={contrast} display={`${contrast}%`} min={0} max={200} onChange={setContrast} />
+        <Slider label="Saturation" value={saturate} display={`${saturate}%`} min={0} max={200} onChange={setSaturate} />
         <Slider label="Darken" value={darken} display={`${darken}%`} min={0} max={100} onChange={setDarken} />
+      </Section>
+
+      <Section title="Effects">
         <Slider label="Blur" value={blur} display={`${blur}px`} min={0} max={20} onChange={setBlur} step={0.5} />
+        <Slider label="Sepia" value={sepia} display={`${sepia}%`} min={0} max={100} onChange={setSepia} />
+        <Slider label="Grayscale" value={grayscale} display={`${grayscale}%`} min={0} max={100} onChange={setGrayscale} />
+        <Slider label="Invert" value={invert} display={`${invert}%`} min={0} max={100} onChange={setInvert} />
+        <Slider label="Hue" value={hueRotate} display={`${hueRotate}\u00B0`} min={0} max={360} onChange={setHueRotate} />
       </Section>
     </div>
   );
@@ -758,13 +955,44 @@ export default function WhisperTool() {
       </Section>
 
       <div className="pt-2 space-y-2">
-        <button
-          onClick={handleExport}
-          className="w-full py-3.5 rounded-xl bg-white text-zinc-950 text-sm font-semibold tracking-tight
-            hover:bg-zinc-100 active:scale-[0.98] transition-all duration-150"
-        >
-          Export PNG
-        </button>
+        {video ? (
+          <>
+            <button
+              onClick={handleExportVideo}
+              disabled={isExportingVideo}
+              className="w-full py-3.5 rounded-xl bg-white text-zinc-950 text-sm font-semibold tracking-tight
+                hover:bg-zinc-100 active:scale-[0.98] transition-all duration-150 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {isExportingVideo ? `Exporting... ${Math.round(videoExportProgress)}%` : 'Export Video with Audio'}
+            </button>
+            {isExportingVideo && (
+              <div className="w-full h-1.5 rounded-full bg-zinc-800 overflow-hidden">
+                <div
+                  className="h-full bg-white rounded-full transition-all duration-200"
+                  style={{ width: `${videoExportProgress}%` }}
+                />
+              </div>
+            )}
+            <p className="text-[10px] text-zinc-600 text-center">
+              Exports full video with text overlay, effects, and audio
+            </p>
+            <button
+              onClick={handleExport}
+              className="w-full py-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 text-xs font-medium
+                hover:text-zinc-200 hover:border-zinc-700 active:scale-[0.98] transition-all duration-150"
+            >
+              Export current frame (PNG)
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={handleExport}
+            className="w-full py-3.5 rounded-xl bg-white text-zinc-950 text-sm font-semibold tracking-tight
+              hover:bg-zinc-100 active:scale-[0.98] transition-all duration-150"
+          >
+            Export PNG
+          </button>
+        )}
         <button
           onClick={handleReset}
           className="w-full py-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 text-xs font-medium
@@ -784,13 +1012,10 @@ export default function WhisperTool() {
 
   return (
     <main className="h-screen overflow-hidden bg-zinc-950 text-zinc-200 antialiased selection:bg-white/10">
-      {/* Subtle grain overlay */}
       <div className="fixed inset-0 pointer-events-none opacity-[0.015]" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E")` }} />
 
       <div className="relative h-full">
-        {/* ─── Canvas: full screen on mobile, right panel on desktop ─── */}
         <div className="h-full lg:ml-[340px] xl:ml-[360px] flex items-center justify-center p-3 lg:p-8 relative overflow-hidden">
-          {/* Checkerboard background */}
           <div className="absolute inset-0 opacity-[0.03]" style={{
             backgroundImage: 'linear-gradient(45deg, #fff 25%, transparent 25%), linear-gradient(-45deg, #fff 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #fff 75%), linear-gradient(-45deg, transparent 75%, #fff 75%)',
             backgroundSize: '20px 20px',
@@ -840,12 +1065,10 @@ export default function WhisperTool() {
           </div>
         </div>
 
-        {/* ─── Sidebar: floating pane on mobile, static on desktop ─── */}
         <aside
           className="fixed inset-x-0 bottom-0 lg:inset-y-0 lg:left-0 lg:right-auto lg:bottom-auto w-full lg:w-[340px] xl:w-[360px] flex flex-col bg-zinc-950/95 lg:bg-zinc-950 backdrop-blur-xl lg:backdrop-blur-none border-t lg:border-t-0 lg:border-r border-zinc-800/60 lg:border-zinc-900 rounded-t-2xl lg:rounded-none z-30 floating-pane-safe"
           style={{ height: `${paneHeight}vh` }}
         >
-          {/* Drag handle — resize on mobile */}
           <div
             className="lg:hidden shrink-0 flex items-center justify-center py-2 cursor-ns-resize touch-none"
             onPointerDown={handlePaneResizeDown}
@@ -853,7 +1076,6 @@ export default function WhisperTool() {
             <div className="w-8 h-1 rounded-full bg-zinc-700" />
           </div>
 
-          {/* Header */}
           <div className="px-5 pt-2 pb-3 lg:pt-4 lg:pb-4 shrink-0">
             <div className="flex items-center gap-3">
               <h1 className="text-base font-bold tracking-tight text-white">tf</h1>
@@ -861,7 +1083,6 @@ export default function WhisperTool() {
             </div>
           </div>
 
-          {/* Tab bar */}
           <div className="px-4 shrink-0">
             <div className="flex gap-px bg-zinc-900 rounded-lg p-px">
               {TABS.map((tab) => (
@@ -883,7 +1104,6 @@ export default function WhisperTool() {
             </div>
           </div>
 
-          {/* Panel content */}
           <div className="flex-1 overflow-y-auto px-5 py-5 scrollbar-thin">
             {activePanel === 'image' && renderImagePanel()}
             {activePanel === 'text' && renderTextPanel()}
