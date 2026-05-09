@@ -66,10 +66,16 @@ export default function WhisperTool() {
   const [blur, setBlur] = useState(0);
   const [fontReady, setFontReady] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [isDraggingImage, setIsDraggingImage] = useState(false);
+  const [imageOffsetX, setImageOffsetX] = useState(0);
+  const [imageOffsetY, setImageOffsetY] = useState(0);
+  const [imageZoom, setImageZoom] = useState(1);
 
   const dragOffsetRef = useRef({ x: 0, y: 0 });
   const bboxRef = useRef<TextBBox | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const pinchStartDistRef = useRef(0);
+  const pinchStartZoomRef = useRef(1);
 
   /* ── Image upload ── */
   const handleImageUpload = useCallback(
@@ -148,23 +154,33 @@ export default function WhisperTool() {
       ctx.save();
       if (blur > 0) ctx.filter = `blur(${blur}px)`;
 
+      const ox = imageOffsetX;
+      const oy = imageOffsetY;
+      const z = imageZoom;
+
       if (fitMode === 'stretch') {
-        ctx.drawImage(image, 0, 0, size, size);
+        const zw = size * z;
+        const zh = size * z;
+        ctx.drawImage(image, ox + (size - zw) / 2, oy + (size - zh) / 2, zw, zh);
       } else if (fitMode === 'contain') {
         const scale = Math.min(size / image.width, size / image.height);
-        const w = image.width * scale;
-        const h = image.height * scale;
-        ctx.drawImage(image, (size - w) / 2, (size - h) / 2, w, h);
+        const w = image.width * scale * z;
+        const h = image.height * scale * z;
+        ctx.drawImage(image, (size - w) / 2 + ox, (size - h) / 2 + oy, w, h);
       } else {
         const imgAspect = image.width / image.height;
         if (imgAspect > 1) {
           const sh = image.height;
           const sw = image.height;
-          ctx.drawImage(image, (image.width - sw) / 2, 0, sw, sh, 0, 0, size, size);
+          const zw = size * z;
+          const zh = size * z;
+          ctx.drawImage(image, (image.width - sw) / 2, 0, sw, sh, ox + (size - zw) / 2, oy + (size - zh) / 2, zw, zh);
         } else {
           const sw = image.width;
           const sh = image.width;
-          ctx.drawImage(image, 0, (image.height - sh) / 2, sw, sh, 0, 0, size, size);
+          const zw = size * z;
+          const zh = size * z;
+          ctx.drawImage(image, 0, (image.height - sh) / 2, sw, sh, ox + (size - zw) / 2, oy + (size - zh) / 2, zw, zh);
         }
       }
 
@@ -234,41 +250,59 @@ export default function WhisperTool() {
   }, [
     image, caption, fontFamily, fontWeight, fontSize, lineHeight, outlineSize,
     textColor, outlineColor, textAlign, caseMode, textX, textY,
-    exportSize, fitMode, darken, blur,
+    exportSize, fitMode, darken, blur, imageOffsetX, imageOffsetY, imageZoom,
   ]);
 
   useEffect(() => { draw(); }, [draw]);
 
+  /* ── Zoom: wheel (PC) and pinch (mobile) ── */
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+
+    const handleWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      const delta = -e.deltaY * 0.002;
+      setImageZoom((z) => Math.min(5, Math.max(0.1, z + delta)));
+    };
+
+    const getTouchDist = (touches: TouchList) => {
+      const dx = touches[0].clientX - touches[1].clientX;
+      const dy = touches[0].clientY - touches[1].clientY;
+      return Math.hypot(dx, dy);
+    };
+
+    const handleTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        pinchStartDistRef.current = getTouchDist(e.touches);
+        pinchStartZoomRef.current = imageZoom;
+      }
+    };
+
+    const handleTouchMove = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        const dist = getTouchDist(e.touches);
+        const ratio = dist / pinchStartDistRef.current;
+        setImageZoom(Math.min(5, Math.max(0.1, pinchStartZoomRef.current * ratio)));
+      }
+    };
+
+    canvas.addEventListener('wheel', handleWheel, { passive: false });
+    canvas.addEventListener('touchstart', handleTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', handleTouchMove, { passive: false });
+
+    return () => {
+      canvas.removeEventListener('wheel', handleWheel);
+      canvas.removeEventListener('touchstart', handleTouchStart);
+      canvas.removeEventListener('touchmove', handleTouchMove);
+    };
+  }, [imageZoom]);
+
   /* ── Pointer drag handlers ── */
   const handlePointerDown = useCallback(
     (e: PointerEvent<HTMLCanvasElement>) => {
-      const canvas = canvasRef.current;
-      if (!canvas || !bboxRef.current) return;
-
-      const rect = canvas.getBoundingClientRect();
-      const scale = exportSize / rect.width;
-      const px = (e.clientX - rect.left) * scale;
-      const py = (e.clientY - rect.top) * scale;
-      const b = bboxRef.current;
-      const padding = (outlineSize + fontSize * 0.1) * 2;
-
-      if (
-        px >= b.x - padding &&
-        px <= b.x + b.width + padding &&
-        py >= b.y - padding &&
-        py <= b.y + b.height + padding
-      ) {
-        setIsDragging(true);
-        dragOffsetRef.current = { x: px - textX, y: py - textY };
-        canvas.setPointerCapture(e.pointerId);
-      }
-    },
-    [exportSize, outlineSize, fontSize, textX, textY],
-  );
-
-  const handlePointerMove = useCallback(
-    (e: PointerEvent<HTMLCanvasElement>) => {
-      if (!isDragging) return;
       const canvas = canvasRef.current;
       if (!canvas) return;
 
@@ -277,14 +311,61 @@ export default function WhisperTool() {
       const px = (e.clientX - rect.left) * scale;
       const py = (e.clientY - rect.top) * scale;
 
-      setTextX(Math.round(px - dragOffsetRef.current.x));
-      setTextY(Math.round(py - dragOffsetRef.current.y));
+      // Check if clicking on text first
+      if (bboxRef.current) {
+        const b = bboxRef.current;
+        const padding = (outlineSize + fontSize * 0.1) * 2;
+
+        if (
+          px >= b.x - padding &&
+          px <= b.x + b.width + padding &&
+          py >= b.y - padding &&
+          py <= b.y + b.height + padding
+        ) {
+          setIsDragging(true);
+          setIsDraggingImage(false);
+          dragOffsetRef.current = { x: px - textX, y: py - textY };
+          canvas.setPointerCapture(e.pointerId);
+          return;
+        }
+      }
+
+      // Otherwise drag the image
+      if (image) {
+        setIsDraggingImage(true);
+        setIsDragging(false);
+        dragOffsetRef.current = { x: px - imageOffsetX, y: py - imageOffsetY };
+        canvas.setPointerCapture(e.pointerId);
+      }
     },
-    [isDragging, exportSize],
+    [exportSize, outlineSize, fontSize, textX, textY, image, imageOffsetX, imageOffsetY],
+  );
+
+  const handlePointerMove = useCallback(
+    (e: PointerEvent<HTMLCanvasElement>) => {
+      if (!isDragging && !isDraggingImage) return;
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const scale = exportSize / rect.width;
+      const px = (e.clientX - rect.left) * scale;
+      const py = (e.clientY - rect.top) * scale;
+
+      if (isDragging) {
+        setTextX(Math.round(px - dragOffsetRef.current.x));
+        setTextY(Math.round(py - dragOffsetRef.current.y));
+      } else if (isDraggingImage) {
+        setImageOffsetX(Math.round(px - dragOffsetRef.current.x));
+        setImageOffsetY(Math.round(py - dragOffsetRef.current.y));
+      }
+    },
+    [isDragging, isDraggingImage, exportSize],
   );
 
   const handlePointerUp = useCallback(() => {
     setIsDragging(false);
+    setIsDraggingImage(false);
   }, []);
 
   /* ── Export / Reset ── */
@@ -312,6 +393,9 @@ export default function WhisperTool() {
     setFitMode('cover');
     setDarken(30);
     setBlur(0);
+    setImageOffsetX(0);
+    setImageOffsetY(0);
+    setImageZoom(1);
   }, []);
 
   /* ── Slider helper ── */
@@ -459,6 +543,14 @@ export default function WhisperTool() {
                 </span>
                 {ButtonGroup<FitMode>(FIT_MODES, fitMode, setFitMode)}
               </div>
+
+              {image && (
+                <>
+                  {Slider('Zoom', imageZoom, `${Math.round(imageZoom * 100)}%`, 0.1, 5, setImageZoom, 0.05)}
+                  {Slider('Offset X', imageOffsetX, String(imageOffsetX), -exportSize, exportSize, setImageOffsetX)}
+                  {Slider('Offset Y', imageOffsetY, String(imageOffsetY), -exportSize, exportSize, setImageOffsetY)}
+                </>
+              )}
             </>,
           )}
 
@@ -624,7 +716,7 @@ export default function WhisperTool() {
               <canvas
                 ref={canvasRef}
                 className="w-full aspect-square rounded-2xl shadow-2xl shadow-black/50"
-                style={{ touchAction: 'none', cursor: isDragging ? 'grabbing' : 'grab' }}
+                style={{ touchAction: 'none', cursor: (isDragging || isDraggingImage) ? 'grabbing' : 'grab' }}
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
@@ -651,9 +743,9 @@ export default function WhisperTool() {
                 </div>
               )}
             </div>
-            <p className="text-center text-xs text-[#86868b] mt-3">
+              <p className="text-center text-xs text-[#86868b] mt-3">
               {image
-                ? `${exportSize}\u00D7${exportSize} \u00B7 Drag text to reposition`
+                ? `${exportSize}\u00D7${exportSize} \u00B7 Drag to move \u00B7 Scroll / pinch to zoom`
                 : `${exportSize}\u00D7${exportSize}`}
             </p>
           </div>
