@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ChangeEvent, PointerEvent, ReactNode } from 'react';
 import uprightFontUrl from '../../fonts/Upright.otf';
 import { downloadCanvas } from '../utils/canvasExport';
 import { wrapText } from '../utils/textWrap';
@@ -72,7 +73,7 @@ export default function WhisperTool() {
 
   /* ── Image upload ── */
   const handleImageUpload = useCallback(
-    (e: React.ChangeEvent<HTMLInputElement>) => {
+    (e: ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
       const reader = new FileReader();
@@ -240,7 +241,7 @@ export default function WhisperTool() {
 
   /* ── Pointer drag handlers ── */
   const handlePointerDown = useCallback(
-    (e: React.PointerEvent<HTMLCanvasElement>) => {
+    (e: PointerEvent<HTMLCanvasElement>) => {
       const canvas = canvasRef.current;
       if (!canvas || !bboxRef.current) return;
 
@@ -266,7 +267,7 @@ export default function WhisperTool() {
   );
 
   const handlePointerMove = useCallback(
-    (e: React.PointerEvent<HTMLCanvasElement>) => {
+    (e: PointerEvent<HTMLCanvasElement>) => {
       if (!isDragging) return;
       const canvas = canvasRef.current;
       if (!canvas) return;
@@ -370,7 +371,7 @@ export default function WhisperTool() {
   );
 
   /* ── Section wrapper ── */
-  const Section = (title: string, children: React.ReactNode) => (
+  const Section = (title: string, children: ReactNode) => (
     <section className="bg-white/[0.03] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-5 space-y-4">
       <h2 className="text-[11px] font-semibold text-[#86868b] uppercase tracking-[0.08em]">
         {title}
