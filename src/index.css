@@ -1,24 +1,140 @@
 @import "tailwindcss";
 
-::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+@font-face {
+  font-family: 'Inter';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('https://fonts.gstatic.com/s/inter/v18/UcCo3FwrK3iLTcviYwY.woff2') format('woff2');
 }
 
-::-webkit-scrollbar-track {
+:root {
+  color-scheme: dark;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: #09090b;
+}
+
+@media (min-width: 1024px) {
+  body {
+    overflow: hidden;
+  }
+}
+
+/* ── Scrollbar ── */
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.06) transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 4px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
   background: transparent;
 }
 
-::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 3px;
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 2px;
 }
 
-::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.2);
+.scrollbar-thin::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.12);
 }
 
+/* ── Range slider ── */
+.slider {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 2px;
+  background: #27272a;
+  border-radius: 1px;
+  outline: none;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.slider:hover {
+  background: #3f3f46;
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fafafa;
+  cursor: pointer;
+  border: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(0, 0, 0, 0.1);
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+
+.slider::-webkit-slider-thumb:hover {
+  transform: scale(1.15);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(0, 0, 0, 0.1);
+}
+
+.slider::-webkit-slider-thumb:active {
+  transform: scale(0.95);
+}
+
+.slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #fafafa;
+  cursor: pointer;
+  border: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+}
+
+/* ── Color input ── */
+.color-input {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 36px;
+  border: 0;
+  border-radius: 8px;
+  cursor: pointer;
+  background: transparent;
+  padding: 0;
+}
+
+.color-input::-webkit-color-swatch-wrapper {
+  padding: 0;
+}
+
+.color-input::-webkit-color-swatch {
+  border: 1px solid #27272a;
+  border-radius: 8px;
+}
+
+.color-input::-moz-color-swatch {
+  border: 1px solid #27272a;
+  border-radius: 8px;
+}
+
+/* ── Select ── */
+select {
+  background-color: rgba(24, 24, 27, 0.6);
+}
+
+select option {
+  background: #18181b;
+  color: #e4e4e7;
+}
+
+/* ── Transitions ── */
 * {
-  scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.1) transparent;
+  -webkit-tap-highlight-color: transparent;
 }

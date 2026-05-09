@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ChangeEvent, PointerEvent, ReactNode } from 'react';
+import type { ChangeEvent, PointerEvent } from 'react';
 import uprightFontUrl from '../../fonts/Upright.otf';
 import { downloadCanvas } from '../utils/canvasExport';
 import { wrapText } from '../utils/textWrap';
@@ -46,6 +46,96 @@ const TEXT_ALIGNS: TextAlign[] = ['left', 'center', 'right'];
 
 const DEFAULT_FONT = 'Upright';
 
+/* ── Small reusable UI primitives ── */
+
+function Slider({
+  label, value, display, min, max, onChange, step = 1,
+}: {
+  label: string; value: number; display: string;
+  min: number; max: number; onChange: (v: number) => void; step?: number;
+}) {
+  return (
+    <div className="group">
+      <div className="flex justify-between items-baseline mb-2">
+        <span className="text-[11px] text-zinc-500 font-medium tracking-wide uppercase">{label}</span>
+        <span className="text-[11px] text-zinc-400 tabular-nums font-mono">{display}</span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="slider"
+      />
+    </div>
+  );
+}
+
+function ButtonGroup<T extends string>({
+  options, selected, onChange, labels,
+}: {
+  options: readonly T[]; selected: T; onChange: (v: T) => void; labels?: Record<T, string>;
+}) {
+  return (
+    <div className="flex gap-px rounded-lg overflow-hidden bg-zinc-800/50">
+      {options.map((opt) => (
+        <button
+          key={opt}
+          onClick={() => onChange(opt)}
+          className={`flex-1 py-2 text-[11px] font-medium tracking-wide transition-all duration-150 ${
+            selected === opt
+              ? 'bg-white text-zinc-950'
+              : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
+          }`}
+        >
+          {labels?.[opt] ?? opt}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function Section({ title, children, compact }: { title: string; children: React.ReactNode; compact?: boolean }) {
+  return (
+    <section className={compact ? 'space-y-3' : 'space-y-4'}>
+      <h2 className="text-[10px] font-semibold text-zinc-600 uppercase tracking-[0.15em] flex items-center gap-2">
+        <span>{title}</span>
+        <span className="flex-1 h-px bg-zinc-800/80" />
+      </h2>
+      <div className="space-y-3">
+        {children}
+      </div>
+    </section>
+  );
+}
+
+const PRESET_LABELS: Record<PositionPreset, string> = {
+  'top-left': '\u2196',
+  top: '\u2191',
+  'top-right': '\u2197',
+  center: '\u2022',
+  'bottom-left': '\u2199',
+  bottom: '\u2193',
+  'bottom-right': '\u2198',
+  middle: '\u2195',
+};
+
+const CASE_LABELS: Record<CaseMode, string> = {
+  keep: 'Aa',
+  uppercase: 'AA',
+  lowercase: 'aa',
+};
+
+const ALIGN_LABELS: Record<TextAlign, string> = {
+  left: '\u2261 L',
+  center: '\u2261 C',
+  right: '\u2261 R',
+};
+
+/* ── Main component ── */
+
 export default function WhisperTool() {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
   const [caption, setCaption] = useState('');
@@ -70,6 +160,7 @@ export default function WhisperTool() {
   const [imageOffsetX, setImageOffsetX] = useState(0);
   const [imageOffsetY, setImageOffsetY] = useState(0);
   const [imageZoom, setImageZoom] = useState(1);
+  const [activePanel, setActivePanel] = useState<'image' | 'text' | 'export'>('image');
 
   const dragOffsetRef = useRef({ x: 0, y: 0 });
   const bboxRef = useRef<TextBBox | null>(null);
@@ -147,7 +238,7 @@ export default function WhisperTool() {
       canvas.height = size;
     }
 
-    ctx.fillStyle = '#000000';
+    ctx.fillStyle = '#0a0a0a';
     ctx.fillRect(0, 0, size, size);
 
     if (image) {
@@ -311,7 +402,6 @@ export default function WhisperTool() {
       const px = (e.clientX - rect.left) * scale;
       const py = (e.clientY - rect.top) * scale;
 
-      // Check if clicking on text first
       if (bboxRef.current) {
         const b = bboxRef.current;
         const padding = (outlineSize + fontSize * 0.1) * 2;
@@ -330,7 +420,6 @@ export default function WhisperTool() {
         }
       }
 
-      // Otherwise drag the image
       if (image) {
         setIsDraggingImage(true);
         setIsDragging(false);
@@ -398,356 +487,298 @@ export default function WhisperTool() {
     setImageZoom(1);
   }, []);
 
-  /* ── Slider helper ── */
-  const Slider = (
-    label: string,
-    value: number,
-    display: string,
-    min: number,
-    max: number,
-    onChange: (v: number) => void,
-    step?: number,
-  ) => (
-    <div>
-      <div className="flex justify-between items-center mb-1">
-        <span className="text-xs text-[#86868b] font-medium">{label}</span>
-        <span className="text-xs text-white/60 tabular-nums">{display}</span>
-      </div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step ?? 1}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full h-1.5 appearance-none bg-white/10 rounded-full accent-[#2997ff] cursor-pointer
-          [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:h-4
-          [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-md
-          [&::-webkit-slider-thumb]:cursor-pointer
-          [&::-moz-range-thumb]:w-4 [&::-moz-range-thumb]:h-4 [&::-moz-range-thumb]:rounded-full
-          [&::-moz-range-thumb]:bg-white [&::-moz-range-thumb]:border-0 [&::-moz-range-thumb]:cursor-pointer"
-      />
+  /* ── Tab content renderers ── */
+  const renderImagePanel = () => (
+    <div className="space-y-5">
+      <Section title="Source" compact>
+        <label className="block cursor-pointer group">
+          <input
+            type="file"
+            accept="image/*"
+            onChange={handleImageUpload}
+            className="hidden"
+          />
+          <div className="border border-dashed border-zinc-800 rounded-xl p-6 text-center transition-all duration-200 group-hover:border-zinc-600 group-hover:bg-zinc-900/30">
+            {image ? (
+              <div className="flex items-center gap-4 justify-center">
+                <div className="w-10 h-10 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-emerald-500">
+                    <path d="M20 6L9 17l-5-5" />
+                  </svg>
+                </div>
+                <div className="text-left">
+                  <p className="text-xs text-zinc-300 font-medium">{image.naturalWidth} &times; {image.naturalHeight}</p>
+                  <p className="text-[10px] text-zinc-600 mt-0.5">Click to replace</p>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="w-10 h-10 mx-auto mb-3 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-zinc-600">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+                  </svg>
+                </div>
+                <p className="text-xs text-zinc-400 font-medium">Drop image or click</p>
+                <p className="text-[10px] text-zinc-600 mt-1">PNG, JPG, WebP</p>
+              </>
+            )}
+          </div>
+        </label>
+      </Section>
+
+      <Section title="Fit">
+        <ButtonGroup<FitMode> options={FIT_MODES} selected={fitMode} onChange={setFitMode} />
+      </Section>
+
+      {image && (
+        <Section title="Transform">
+          <Slider label="Zoom" value={imageZoom} display={`${Math.round(imageZoom * 100)}%`} min={0.1} max={5} onChange={setImageZoom} step={0.05} />
+          <Slider label="Pan X" value={imageOffsetX} display={String(imageOffsetX)} min={-exportSize} max={exportSize} onChange={setImageOffsetX} />
+          <Slider label="Pan Y" value={imageOffsetY} display={String(imageOffsetY)} min={-exportSize} max={exportSize} onChange={setImageOffsetY} />
+        </Section>
+      )}
+
+      <Section title="Effects">
+        <Slider label="Darken" value={darken} display={`${darken}%`} min={0} max={100} onChange={setDarken} />
+        <Slider label="Blur" value={blur} display={`${blur}px`} min={0} max={20} onChange={setBlur} step={0.5} />
+      </Section>
     </div>
   );
 
-  /* ── Button group helper ── */
-  const ButtonGroup = <T extends string>(
-    options: readonly T[],
-    selected: T,
-    onChange: (v: T) => void,
-    labels?: Record<T, string>,
-  ) => (
-    <div className="flex gap-1.5">
-      {options.map((opt) => (
-        <button
-          key={opt}
-          onClick={() => onChange(opt)}
-          className={`flex-1 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
-            selected === opt
-              ? 'bg-white text-black shadow-sm'
-              : 'bg-white/5 text-[#86868b] hover:bg-white/10 hover:text-white'
-          }`}
+  const renderTextPanel = () => (
+    <div className="space-y-5">
+      <Section title="Caption">
+        <textarea
+          value={caption}
+          onChange={(e) => setCaption(e.target.value)}
+          placeholder="Type your caption..."
+          rows={3}
+          className="w-full bg-zinc-900/60 border border-zinc-800 rounded-xl px-4 py-3 text-sm text-zinc-200 placeholder-zinc-600
+            resize-none focus:outline-none focus:border-zinc-600 transition-colors font-medium"
+        />
+        <ButtonGroup<CaseMode> options={CASE_MODES} selected={caseMode} onChange={setCaseMode} labels={CASE_LABELS} />
+      </Section>
+
+      <Section title="Typeface">
+        <select
+          value={fontFamily}
+          onChange={(e) => setFontFamily(e.target.value)}
+          className="w-full bg-zinc-900/60 border border-zinc-800 rounded-xl px-4 py-2.5 text-sm text-zinc-200
+            focus:outline-none focus:border-zinc-600 transition-colors appearance-none cursor-pointer"
+          style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg width='10' height='6' viewBox='0 0 10 6' fill='none' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M1 1L5 5L9 1' stroke='%2371717a' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 12px center' }}
         >
-          {labels?.[opt] ?? opt}
-        </button>
-      ))}
+          <option value="Upright">Upright</option>
+          <option value="Arial">Arial</option>
+          <option value="Times New Roman">Times New Roman</option>
+        </select>
+
+        <Slider label="Weight" value={fontWeight} display={String(fontWeight)} min={100} max={900} onChange={setFontWeight} />
+        <Slider label="Size" value={fontSize} display={`${fontSize}px`} min={20} max={300} onChange={setFontSize} />
+        <Slider label="Leading" value={lineHeight} display={lineHeight.toFixed(1)} min={0.8} max={2.0} onChange={setLineHeight} step={0.1} />
+        <Slider label="Stroke" value={outlineSize} display={`${outlineSize}px`} min={0} max={50} onChange={setOutlineSize} />
+      </Section>
+
+      <Section title="Color">
+        <div className="flex gap-3">
+          <div className="flex-1 space-y-1.5">
+            <span className="text-[10px] text-zinc-600 font-medium uppercase tracking-wider">Fill</span>
+            <div className="relative">
+              <input
+                type="color"
+                value={textColor}
+                onChange={(e) => setTextColor(e.target.value)}
+                className="color-input"
+              />
+              <div className="absolute inset-0 rounded-lg border border-zinc-800 pointer-events-none" />
+            </div>
+          </div>
+          <div className="flex-1 space-y-1.5">
+            <span className="text-[10px] text-zinc-600 font-medium uppercase tracking-wider">Outline</span>
+            <div className="relative">
+              <input
+                type="color"
+                value={outlineColor}
+                onChange={(e) => setOutlineColor(e.target.value)}
+                className="color-input"
+              />
+              <div className="absolute inset-0 rounded-lg border border-zinc-800 pointer-events-none" />
+            </div>
+          </div>
+        </div>
+      </Section>
+
+      <Section title="Align">
+        <ButtonGroup<TextAlign> options={TEXT_ALIGNS} selected={textAlign} onChange={setTextAlign} labels={ALIGN_LABELS} />
+      </Section>
+
+      <Section title="Position">
+        <div className="grid grid-cols-4 gap-px rounded-lg overflow-hidden bg-zinc-800/50">
+          {PRESETS.map((preset) => (
+            <button
+              key={preset}
+              onClick={() => applyPositionPreset(preset)}
+              className="py-2.5 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800 transition-colors text-xs"
+            >
+              {PRESET_LABELS[preset]}
+            </button>
+          ))}
+        </div>
+        <Slider label="X" value={textX} display={String(textX)} min={0} max={exportSize} onChange={setTextX} />
+        <Slider label="Y" value={textY} display={String(textY)} min={0} max={exportSize} onChange={setTextY} />
+      </Section>
     </div>
   );
 
-  /* ── Section wrapper ── */
-  const Section = (title: string, children: ReactNode) => (
-    <section className="bg-white/[0.03] backdrop-blur-xl border border-white/[0.06] rounded-2xl p-5 space-y-4">
-      <h2 className="text-[11px] font-semibold text-[#86868b] uppercase tracking-[0.08em]">
-        {title}
-      </h2>
-      {children}
-    </section>
+  const renderExportPanel = () => (
+    <div className="space-y-5">
+      <Section title="Resolution">
+        <div className="flex gap-px rounded-lg overflow-hidden bg-zinc-800/50">
+          {EXPORT_SIZES.map((size) => (
+            <button
+              key={size}
+              onClick={() => setExportSize(size)}
+              className={`flex-1 py-2.5 text-[11px] font-medium tracking-wide transition-all duration-150 ${
+                exportSize === size
+                  ? 'bg-white text-zinc-950'
+                  : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800'
+              }`}
+            >
+              {size}
+            </button>
+          ))}
+        </div>
+        <p className="text-[10px] text-zinc-600">
+          {exportSize}&times;{exportSize}px square canvas
+        </p>
+      </Section>
+
+      <div className="pt-2 space-y-2">
+        <button
+          onClick={handleExport}
+          className="w-full py-3.5 rounded-xl bg-white text-zinc-950 text-sm font-semibold tracking-tight
+            hover:bg-zinc-100 active:scale-[0.98] transition-all duration-150"
+        >
+          Export PNG
+        </button>
+        <button
+          onClick={handleReset}
+          className="w-full py-3 rounded-xl bg-zinc-900 border border-zinc-800 text-zinc-400 text-xs font-medium
+            hover:text-zinc-200 hover:border-zinc-700 active:scale-[0.98] transition-all duration-150"
+        >
+          Reset everything
+        </button>
+      </div>
+    </div>
   );
 
-  /* ── Preset labels ── */
-  const presetLabels: Record<PositionPreset, string> = {
-    'top-left': '\u2196 T-L',
-    top: '\u2191 Top',
-    'top-right': '\u2197 T-R',
-    center: '\u2299 Ctr',
-    'bottom-left': '\u2199 B-L',
-    bottom: '\u2193 Bot',
-    'bottom-right': '\u2198 B-R',
-    middle: '\u2195 Mid',
-  };
-
-  const CASE_LABELS: Record<CaseMode, string> = {
-    keep: 'Aa',
-    uppercase: 'ABC',
-    lowercase: 'abc',
-  };
-
-  const ALIGN_LABELS: Record<TextAlign, string> = {
-    left: '\u2261 Left',
-    center: '\u2261 Ctr',
-    right: '\u2261 Right',
-  };
+  const TABS = [
+    { key: 'image' as const, label: 'Image', icon: 'M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z' },
+    { key: 'text' as const, label: 'Text', icon: 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z' },
+    { key: 'export' as const, label: 'Export', icon: 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4' },
+  ];
 
   return (
-    <main
-      className="min-h-screen bg-black text-[#F5F5F7] antialiased selection:bg-white/20"
-      style={{ fontFamily: 'Inter, system-ui, -apple-system, sans-serif' }}
-    >
-      <div className="flex flex-col lg:flex-row gap-6 p-4 md:p-6 lg:p-8 max-w-[1440px] mx-auto">
-        {/* ─── Controls ─── */}
-        <aside className="w-full lg:w-[340px] xl:w-[380px] shrink-0 space-y-5 overflow-y-auto lg:max-h-[calc(100vh-4rem)] lg:sticky lg:top-8">
-          <header className="pb-1">
-            <h1 className="text-2xl font-bold tracking-tight">tf</h1>
-            <p className="text-sm text-[#86868b] mt-0.5">
-              image macro maker
-            </p>
-          </header>
+    <main className="min-h-screen lg:h-screen lg:overflow-hidden bg-zinc-950 text-zinc-200 antialiased selection:bg-white/10">
+      {/* Subtle grain overlay */}
+      <div className="fixed inset-0 pointer-events-none opacity-[0.015]" style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='1'/%3E%3C/svg%3E")` }} />
 
-          {/* Image */}
-          {Section('Image',
-            <>
-              <label className="block cursor-pointer">
-                <input
-                  type="file"
-                  accept="image/*"
-                  onChange={handleImageUpload}
-                  className="hidden"
-                />
-                <div className="border-2 border-dashed border-white/[0.08] rounded-xl p-5 text-center transition-colors hover:border-white/25">
-                  {image ? (
-                    <div className="flex items-center gap-3 justify-center">
-                      <div className="w-8 h-8 rounded-lg bg-white/10 flex items-center justify-center text-xs font-bold text-[#86868b]">
-                        {Math.round(image.width / image.height * 100)}%
-                      </div>
-                      <p className="text-xs text-[#86868b]">
-                        {image.naturalWidth}&times;{image.naturalHeight}
-                      </p>
-                      <span className="text-xs text-[#2997ff] hover:underline">
-                        Change
-                      </span>
-                    </div>
-                  ) : (
-                    <>
-                      <p className="text-sm font-medium">Upload Image</p>
-                      <p className="text-xs text-[#86868b] mt-1">
-                        PNG, JPG, WebP
-                      </p>
-                    </>
-                  )}
-                </div>
-              </label>
+      <div className="flex flex-col lg:flex-row h-screen">
+        {/* ─── Sidebar ─── */}
+        <aside className="w-full lg:w-[340px] xl:w-[360px] shrink-0 flex flex-col border-r border-zinc-900 bg-zinc-950 lg:h-screen max-h-[60vh] lg:max-h-none">
+          {/* Header */}
+          <div className="px-5 pt-5 pb-4 flex items-center justify-between">
+            <div>
+              <h1 className="text-base font-bold tracking-tight text-white">tf</h1>
+              <p className="text-[10px] text-zinc-600 mt-0.5 tracking-wide">image macro maker</p>
+            </div>
+            <div className="flex items-center gap-1 text-[10px] text-zinc-700">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500/60" />
+              <span>{image ? 'Ready' : 'No image'}</span>
+            </div>
+          </div>
 
-              <div>
-                <span className="text-xs text-[#86868b] font-medium block mb-1.5">
-                  Fit
-                </span>
-                {ButtonGroup<FitMode>(FIT_MODES, fitMode, setFitMode)}
-              </div>
-
-              {image && (
-                <>
-                  {Slider('Zoom', imageZoom, `${Math.round(imageZoom * 100)}%`, 0.1, 5, setImageZoom, 0.05)}
-                  {Slider('Offset X', imageOffsetX, String(imageOffsetX), -exportSize, exportSize, setImageOffsetX)}
-                  {Slider('Offset Y', imageOffsetY, String(imageOffsetY), -exportSize, exportSize, setImageOffsetY)}
-                </>
-              )}
-            </>,
-          )}
-
-          {/* Effects */}
-          {Section('Effects',
-            <>
-              {Slider('Darken', darken, `${darken}%`, 0, 100, setDarken)}
-              {Slider('Blur', blur, `${blur}px`, 0, 20, setBlur, 0.5)}
-            </>,
-          )}
-
-          {/* Caption */}
-          {Section('Caption',
-            <>
-              <textarea
-                value={caption}
-                onChange={(e) => setCaption(e.target.value)}
-                placeholder="Enter your caption\u2026"
-                rows={3}
-                className="w-full bg-black/50 border border-white/[0.08] rounded-xl p-3 text-sm text-white placeholder-[#86868b]
-                  resize-none focus:outline-none focus:border-white/25 transition-colors"
-              />
-              <div>
-                <span className="text-xs text-[#86868b] font-medium block mb-1.5">
-                  Case
-                </span>
-                {ButtonGroup<CaseMode>(CASE_MODES, caseMode, setCaseMode, CASE_LABELS)}
-              </div>
-            </>,
-          )}
-
-          {/* Typography */}
-          {Section('Typography',
-            <>
-              <div>
-                <span className="text-xs text-[#86868b] font-medium block mb-1.5">
-                  Font
-                </span>
-                <select
-                  value={fontFamily}
-                  onChange={(e) => setFontFamily(e.target.value)}
-                  className="w-full bg-black/50 border border-white/[0.08] rounded-xl px-3 py-2 text-sm text-white
-                    focus:outline-none focus:border-white/25 transition-colors"
-                >
-                  <option value="Upright">Upright</option>
-                  <option value="Arial">Arial</option>
-                  <option value="Times New Roman">Times New Roman</option>
-                </select>
-              </div>
-
-              {Slider('Weight', fontWeight, String(fontWeight), 100, 900, setFontWeight)}
-              {Slider('Size', fontSize, `${fontSize}px`, 20, 300, setFontSize)}
-              {Slider('Line Height', lineHeight, lineHeight.toFixed(1), 0.8, 2.0, setLineHeight, 0.1)}
-              {Slider('Outline', outlineSize, `${outlineSize}px`, 0, 50, setOutlineSize)}
-
-              <div className="flex gap-4">
-                <div className="flex-1">
-                  <span className="text-xs text-[#86868b] font-medium block mb-1.5">
-                    Text
-                  </span>
-                  <input
-                    type="color"
-                    value={textColor}
-                    onChange={(e) => setTextColor(e.target.value)}
-                    className="block w-full h-8 rounded-lg cursor-pointer border-0 bg-transparent
-                      [&::-webkit-color-swatch-wrapper]:p-0
-                      [&::-webkit-color-swatch]:rounded-lg [&::-webkit-color-swatch]:border-0"
-                  />
-                </div>
-                <div className="flex-1">
-                  <span className="text-xs text-[#86868b] font-medium block mb-1.5">
-                    Outline
-                  </span>
-                  <input
-                    type="color"
-                    value={outlineColor}
-                    onChange={(e) => setOutlineColor(e.target.value)}
-                    className="block w-full h-8 rounded-lg cursor-pointer border-0 bg-transparent
-                      [&::-webkit-color-swatch-wrapper]:p-0
-                      [&::-webkit-color-swatch]:rounded-lg [&::-webkit-color-swatch]:border-0"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <span className="text-xs text-[#86868b] font-medium block mb-1.5">
-                  Alignment
-                </span>
-                {ButtonGroup<TextAlign>(TEXT_ALIGNS, textAlign, setTextAlign, ALIGN_LABELS)}
-              </div>
-            </>,
-          )}
-
-          {/* Position */}
-          {Section('Position',
-            <>
-              <div className="grid grid-cols-4 gap-1.5">
-                {PRESETS.map((preset) => (
-                  <button
-                    key={preset}
-                    onClick={() => applyPositionPreset(preset)}
-                    className="px-1 py-1.5 rounded-lg text-[10px] font-medium bg-white/5 text-[#86868b]
-                      hover:bg-white/10 hover:text-white transition-colors leading-none"
-                  >
-                    {presetLabels[preset]}
-                  </button>
-                ))}
-              </div>
-
-              {Slider('X', textX, String(textX), 0, exportSize, setTextX)}
-              {Slider('Y', textY, String(textY), 0, exportSize, setTextY)}
-            </>,
-          )}
-
-          {/* Export */}
-          {Section('Export',
-            <>
-              <div>
-                <span className="text-xs text-[#86868b] font-medium block mb-1.5">
-                  Size
-                </span>
-                <div className="flex gap-1.5">
-                  {EXPORT_SIZES.map((size) => (
-                    <button
-                      key={size}
-                      onClick={() => setExportSize(size)}
-                      className={`flex-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                        exportSize === size
-                          ? 'bg-white text-black shadow-sm'
-                          : 'bg-white/5 text-[#86868b] hover:bg-white/10 hover:text-white'
-                      }`}
-                    >
-                      {size}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-1">
+          {/* Tab bar */}
+          <div className="px-4">
+            <div className="flex gap-px bg-zinc-900 rounded-lg p-px">
+              {TABS.map((tab) => (
                 <button
-                  onClick={handleExport}
-                  className="flex-1 px-4 py-2.5 rounded-xl bg-[#2997ff] text-white text-sm font-semibold
-                    hover:bg-[#47a3ff] active:scale-[0.97] transition-all shadow-lg shadow-[#2997ff]/20"
+                  key={tab.key}
+                  onClick={() => setActivePanel(tab.key)}
+                  className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-[7px] text-[11px] font-medium transition-all duration-150 ${
+                    activePanel === tab.key
+                      ? 'bg-zinc-800 text-white shadow-sm'
+                      : 'text-zinc-600 hover:text-zinc-400'
+                  }`}
                 >
-                  Export PNG
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d={tab.icon} />
+                  </svg>
+                  {tab.label}
                 </button>
-                <button
-                  onClick={handleReset}
-                  className="px-5 py-2.5 rounded-xl bg-white/10 text-white text-sm font-medium
-                    hover:bg-white/20 active:scale-[0.97] transition-all"
-                >
-                  Reset
-                </button>
-              </div>
-            </>,
-          )}
+              ))}
+            </div>
+          </div>
+
+          {/* Panel content */}
+          <div className="flex-1 overflow-y-auto px-5 py-5 scrollbar-thin">
+            {activePanel === 'image' && renderImagePanel()}
+            {activePanel === 'text' && renderTextPanel()}
+            {activePanel === 'export' && renderExportPanel()}
+          </div>
         </aside>
 
-        {/* ─── Canvas Preview ─── */}
-        <div className="flex-1 flex items-start justify-center pt-0 lg:pt-12">
-          <div className="w-full max-w-[600px]">
-            <div className="relative">
+        {/* ─── Canvas area ─── */}
+        <div className="flex-1 flex items-center justify-center p-3 lg:p-8 bg-zinc-950 relative overflow-hidden">
+          {/* Checkerboard background */}
+          <div className="absolute inset-0 opacity-[0.03]" style={{
+            backgroundImage: 'linear-gradient(45deg, #fff 25%, transparent 25%), linear-gradient(-45deg, #fff 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #fff 75%), linear-gradient(-45deg, transparent 75%, #fff 75%)',
+            backgroundSize: '20px 20px',
+            backgroundPosition: '0 0, 0 10px, 10px -10px, -10px 0px',
+          }} />
+
+          <div className="relative w-full max-w-[640px]">
+            <div className="relative group">
+              {/* Canvas shadow/glow */}
+              <div className="absolute -inset-1 rounded-3xl bg-gradient-to-b from-zinc-800/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500" />
+
               <canvas
                 ref={canvasRef}
-                className="w-full aspect-square rounded-2xl shadow-2xl shadow-black/50"
+                className="w-full aspect-square rounded-2xl shadow-2xl shadow-black/60 relative z-10"
                 style={{ touchAction: 'none', cursor: (isDragging || isDraggingImage) ? 'grabbing' : 'grab' }}
                 onPointerDown={handlePointerDown}
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
               />
+
+              {/* Empty state */}
               {!image && (
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none rounded-2xl">
+                <div className="absolute inset-0 flex items-center justify-center pointer-events-none rounded-2xl z-20">
                   <div className="text-center">
-                    <div className="w-12 h-12 mx-auto mb-3 rounded-full bg-white/5 flex items-center justify-center">
-                      <svg
-                        width="20"
-                        height="20"
-                        viewBox="0 0 24 24"
-                        fill="none"
-                        stroke="#86868b"
-                        strokeWidth="1.5"
-                      >
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+                    <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-zinc-900/80 border border-zinc-800 flex items-center justify-center backdrop-blur-sm">
+                      <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" className="text-zinc-600">
+                        <rect x="3" y="3" width="18" height="18" rx="2" />
+                        <circle cx="8.5" cy="8.5" r="1.5" />
+                        <path d="M21 15l-5-5L5 21" />
                       </svg>
                     </div>
-                    <p className="text-sm text-[#86868b] font-medium">
-                      Upload an image to begin
-                    </p>
+                    <p className="text-sm text-zinc-500 font-medium">Upload an image</p>
+                    <p className="text-[10px] text-zinc-700 mt-1">to get started</p>
                   </div>
                 </div>
               )}
             </div>
-              <p className="text-center text-xs text-[#86868b] mt-3">
-              {image
-                ? `${exportSize}\u00D7${exportSize} \u00B7 Drag to move \u00B7 Scroll / pinch to zoom`
-                : `${exportSize}\u00D7${exportSize}`}
-            </p>
+
+            {/* Status bar */}
+            <div className="flex items-center justify-between mt-3 px-1">
+              <span className="text-[10px] text-zinc-700 font-mono">
+                {exportSize}&times;{exportSize}
+              </span>
+              {image && (
+                <span className="text-[10px] text-zinc-700">
+                  Drag to move &middot; Scroll / pinch to zoom
+                </span>
+              )}
+            </div>
           </div>
         </div>
       </div>
