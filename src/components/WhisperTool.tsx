@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { ChangeEvent, PointerEvent } from 'react';
+import type { ChangeEvent, PointerEvent as ReactPointerEvent } from 'react';
 import uprightFontUrl from '../../fonts/Upright.otf';
 import { downloadCanvas } from '../utils/canvasExport';
 import { wrapText } from '../utils/textWrap';
@@ -9,14 +9,8 @@ type FitMode = 'cover' | 'contain' | 'stretch';
 type TextAlign = 'left' | 'center' | 'right';
 type CaseMode = 'keep' | 'uppercase' | 'lowercase';
 type PositionPreset =
-  | 'top'
-  | 'middle'
-  | 'bottom'
-  | 'center'
-  | 'top-left'
-  | 'top-right'
-  | 'bottom-left'
-  | 'bottom-right';
+  | 'top' | 'middle' | 'bottom' | 'center'
+  | 'top-left' | 'top-right' | 'bottom-left' | 'bottom-right';
 
 interface TextBBox {
   x: number;
@@ -45,6 +39,9 @@ const CASE_MODES: CaseMode[] = ['keep', 'uppercase', 'lowercase'];
 const TEXT_ALIGNS: TextAlign[] = ['left', 'center', 'right'];
 
 const DEFAULT_FONT = 'Upright';
+const PANE_MIN_VH = 25;
+const PANE_MAX_VH = 90;
+const PANE_DEFAULT_VH = 70;
 
 /* ── Small reusable UI primitives ── */
 
@@ -112,32 +109,26 @@ function Section({ title, children, compact }: { title: string; children: React.
 }
 
 const PRESET_LABELS: Record<PositionPreset, string> = {
-  'top-left': '\u2196',
-  top: '\u2191',
-  'top-right': '\u2197',
-  center: '\u2022',
-  'bottom-left': '\u2199',
-  bottom: '\u2193',
-  'bottom-right': '\u2198',
-  middle: '\u2195',
+  'top-left': '\u2196', top: '\u2191', 'top-right': '\u2197', center: '\u2022',
+  'bottom-left': '\u2199', bottom: '\u2193', 'bottom-right': '\u2198', middle: '\u2195',
 };
 
 const CASE_LABELS: Record<CaseMode, string> = {
-  keep: 'Aa',
-  uppercase: 'AA',
-  lowercase: 'aa',
+  keep: 'Aa', uppercase: 'AA', lowercase: 'aa',
 };
 
 const ALIGN_LABELS: Record<TextAlign, string> = {
-  left: '\u2261 L',
-  center: '\u2261 C',
-  right: '\u2261 R',
+  left: '\u2261 L', center: '\u2261 C', right: '\u2261 R',
 };
 
 /* ── Main component ── */
 
 export default function WhisperTool() {
   const [image, setImage] = useState<HTMLImageElement | null>(null);
+  const [video, setVideo] = useState<HTMLVideoElement | null>(null);
+  const [videoPlaying, setVideoPlaying] = useState(false);
+  const [videoCurrentTime, setVideoCurrentTime] = useState(0);
+  const [videoDuration, setVideoDuration] = useState(0);
   const [caption, setCaption] = useState('');
   const [fontFamily, setFontFamily] = useState(DEFAULT_FONT);
   const [fontWeight, setFontWeight] = useState(900);
@@ -161,29 +152,92 @@ export default function WhisperTool() {
   const [imageOffsetY, setImageOffsetY] = useState(0);
   const [imageZoom, setImageZoom] = useState(1);
   const [activePanel, setActivePanel] = useState<'image' | 'text' | 'export'>('image');
+  const [paneHeight, setPaneHeight] = useState(PANE_DEFAULT_VH);
+  const [isResizingPane, setIsResizingPane] = useState(false);
 
   const dragOffsetRef = useRef({ x: 0, y: 0 });
   const bboxRef = useRef<TextBBox | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const pinchStartDistRef = useRef(0);
   const pinchStartZoomRef = useRef(1);
+  const animFrameRef = useRef(0);
+  const paneResizeStartRef = useRef({ y: 0, height: 0 });
 
-  /* ── Image upload ── */
-  const handleImageUpload = useCallback(
+  const media = image || video;
+
+  /* ── Media upload ── */
+  const handleMediaUpload = useCallback(
     (e: ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        const img = new Image();
-        img.onload = () => setImage(img);
-        img.src = reader.result as string;
-      };
-      reader.readAsDataURL(file);
+
+      if (file.type.startsWith('video/')) {
+        const url = URL.createObjectURL(file);
+        const vid = document.createElement('video');
+        vid.src = url;
+        vid.crossOrigin = 'anonymous';
+        vid.muted = true;
+        vid.loop = true;
+        vid.playsInline = true;
+        vid.preload = 'auto';
+        vid.onloadeddata = () => {
+          setImage(null);
+          setVideo(vid);
+          setVideoDuration(vid.duration);
+          setVideoCurrentTime(0);
+          setVideoPlaying(false);
+        };
+        vid.load();
+      } else {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const img = new Image();
+          img.onload = () => {
+            setVideo(null);
+            setVideoPlaying(false);
+            setImage(img);
+          };
+          img.src = reader.result as string;
+        };
+        reader.readAsDataURL(file);
+      }
       e.target.value = '';
     },
     [],
   );
+
+  /* ── Video playback controls ── */
+  const toggleVideoPlay = useCallback(() => {
+    if (!video) return;
+    if (video.paused) {
+      video.play();
+      setVideoPlaying(true);
+    } else {
+      video.pause();
+      setVideoPlaying(false);
+    }
+  }, [video]);
+
+  const seekVideo = useCallback((time: number) => {
+    if (!video) return;
+    video.currentTime = time;
+    setVideoCurrentTime(time);
+  }, [video]);
+
+  /* ── Video render loop ── */
+  useEffect(() => {
+    if (!video) return;
+
+    const tick = () => {
+      if (!video.paused) {
+        setVideoCurrentTime(video.currentTime);
+      }
+      animFrameRef.current = requestAnimationFrame(tick);
+    };
+    animFrameRef.current = requestAnimationFrame(tick);
+
+    return () => cancelAnimationFrame(animFrameRef.current);
+  }, [video]);
 
   /* ── Load built-in Upright font ── */
   useEffect(() => {
@@ -203,22 +257,14 @@ export default function WhisperTool() {
       const pad = fontSize * 2;
       const size = exportSize;
       switch (preset) {
-        case 'top':
-          setTextX(size / 2); setTextY(pad); break;
-        case 'middle':
-          setTextY(size / 2); break;
-        case 'bottom':
-          setTextX(size / 2); setTextY(size - pad); break;
-        case 'center':
-          setTextX(size / 2); setTextY(size / 2); break;
-        case 'top-left':
-          setTextX(pad); setTextY(pad); break;
-        case 'top-right':
-          setTextX(size - pad); setTextY(pad); break;
-        case 'bottom-left':
-          setTextX(pad); setTextY(size - pad); break;
-        case 'bottom-right':
-          setTextX(size - pad); setTextY(size - pad); break;
+        case 'top': setTextX(size / 2); setTextY(pad); break;
+        case 'middle': setTextY(size / 2); break;
+        case 'bottom': setTextX(size / 2); setTextY(size - pad); break;
+        case 'center': setTextX(size / 2); setTextY(size / 2); break;
+        case 'top-left': setTextX(pad); setTextY(pad); break;
+        case 'top-right': setTextX(size - pad); setTextY(pad); break;
+        case 'bottom-left': setTextX(pad); setTextY(size - pad); break;
+        case 'bottom-right': setTextX(size - pad); setTextY(size - pad); break;
       }
     },
     [fontSize, exportSize],
@@ -241,37 +287,40 @@ export default function WhisperTool() {
     ctx.fillStyle = '#0a0a0a';
     ctx.fillRect(0, 0, size, size);
 
-    if (image) {
+    const src = image || video;
+    if (src) {
       ctx.save();
       if (blur > 0) ctx.filter = `blur(${blur}px)`;
 
       const ox = imageOffsetX;
       const oy = imageOffsetY;
       const z = imageZoom;
+      const sw = 'videoWidth' in src ? (src as HTMLVideoElement).videoWidth : (src as HTMLImageElement).naturalWidth;
+      const sh = 'videoHeight' in src ? (src as HTMLVideoElement).videoHeight : (src as HTMLImageElement).naturalHeight;
 
       if (fitMode === 'stretch') {
         const zw = size * z;
         const zh = size * z;
-        ctx.drawImage(image, ox + (size - zw) / 2, oy + (size - zh) / 2, zw, zh);
+        ctx.drawImage(src, ox + (size - zw) / 2, oy + (size - zh) / 2, zw, zh);
       } else if (fitMode === 'contain') {
-        const scale = Math.min(size / image.width, size / image.height);
-        const w = image.width * scale * z;
-        const h = image.height * scale * z;
-        ctx.drawImage(image, (size - w) / 2 + ox, (size - h) / 2 + oy, w, h);
+        const scale = Math.min(size / sw, size / sh);
+        const w = sw * scale * z;
+        const h = sh * scale * z;
+        ctx.drawImage(src, (size - w) / 2 + ox, (size - h) / 2 + oy, w, h);
       } else {
-        const imgAspect = image.width / image.height;
+        const imgAspect = sw / sh;
         if (imgAspect > 1) {
-          const sh = image.height;
-          const sw = image.height;
+          const cropH = sh;
+          const cropW = sh;
           const zw = size * z;
           const zh = size * z;
-          ctx.drawImage(image, (image.width - sw) / 2, 0, sw, sh, ox + (size - zw) / 2, oy + (size - zh) / 2, zw, zh);
+          ctx.drawImage(src, (sw - cropW) / 2, 0, cropW, cropH, ox + (size - zw) / 2, oy + (size - zh) / 2, zw, zh);
         } else {
-          const sw = image.width;
-          const sh = image.width;
+          const cropW = sw;
+          const cropH = sw;
           const zw = size * z;
           const zh = size * z;
-          ctx.drawImage(image, 0, (image.height - sh) / 2, sw, sh, ox + (size - zw) / 2, oy + (size - zh) / 2, zw, zh);
+          ctx.drawImage(src, 0, (sh - cropH) / 2, cropW, cropH, ox + (size - zw) / 2, oy + (size - zh) / 2, zw, zh);
         }
       }
 
@@ -284,11 +333,9 @@ export default function WhisperTool() {
     }
 
     const displayText =
-      caseMode === 'uppercase'
-        ? caption.toUpperCase()
-        : caseMode === 'lowercase'
-          ? caption.toLowerCase()
-          : caption;
+      caseMode === 'uppercase' ? caption.toUpperCase()
+      : caseMode === 'lowercase' ? caption.toLowerCase()
+      : caption;
 
     const trimmedText = displayText.trim();
 
@@ -332,14 +379,9 @@ export default function WhisperTool() {
       maxX = Math.max(maxX, left + m.width);
     }
 
-    bboxRef.current = {
-      x: minX,
-      y: startY,
-      width: maxX - minX,
-      height: totalH,
-    };
+    bboxRef.current = { x: minX, y: startY, width: maxX - minX, height: totalH };
   }, [
-    image, caption, fontFamily, fontWeight, fontSize, lineHeight, outlineSize,
+    image, video, caption, fontFamily, fontWeight, fontSize, lineHeight, outlineSize,
     textColor, outlineColor, textAlign, caseMode, textX, textY,
     exportSize, fitMode, darken, blur, imageOffsetX, imageOffsetY, imageZoom,
   ]);
@@ -391,9 +433,37 @@ export default function WhisperTool() {
     };
   }, [imageZoom]);
 
-  /* ── Pointer drag handlers ── */
+  /* ── Pane resize via drag handle ── */
+  const handlePaneResizeDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsResizingPane(true);
+    paneResizeStartRef.current = { y: e.clientY, height: paneHeight };
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }, [paneHeight]);
+
+  useEffect(() => {
+    if (!isResizingPane) return;
+
+    const handleMove = (e: globalThis.PointerEvent) => {
+      const dy = paneResizeStartRef.current.y - e.clientY;
+      const vhDelta = (dy / window.innerHeight) * 100;
+      const next = Math.min(PANE_MAX_VH, Math.max(PANE_MIN_VH, paneResizeStartRef.current.height + vhDelta));
+      setPaneHeight(next);
+    };
+
+    const handleUp = () => setIsResizingPane(false);
+
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+    };
+  }, [isResizingPane]);
+
+  /* ── Pointer drag handlers (canvas) ── */
   const handlePointerDown = useCallback(
-    (e: PointerEvent<HTMLCanvasElement>) => {
+    (e: ReactPointerEvent<HTMLCanvasElement>) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
 
@@ -407,10 +477,8 @@ export default function WhisperTool() {
         const padding = (outlineSize + fontSize * 0.1) * 2;
 
         if (
-          px >= b.x - padding &&
-          px <= b.x + b.width + padding &&
-          py >= b.y - padding &&
-          py <= b.y + b.height + padding
+          px >= b.x - padding && px <= b.x + b.width + padding &&
+          py >= b.y - padding && py <= b.y + b.height + padding
         ) {
           setIsDragging(true);
           setIsDraggingImage(false);
@@ -420,18 +488,18 @@ export default function WhisperTool() {
         }
       }
 
-      if (image) {
+      if (media) {
         setIsDraggingImage(true);
         setIsDragging(false);
         dragOffsetRef.current = { x: px - imageOffsetX, y: py - imageOffsetY };
         canvas.setPointerCapture(e.pointerId);
       }
     },
-    [exportSize, outlineSize, fontSize, textX, textY, image, imageOffsetX, imageOffsetY],
+    [exportSize, outlineSize, fontSize, textX, textY, media, imageOffsetX, imageOffsetY],
   );
 
   const handlePointerMove = useCallback(
-    (e: PointerEvent<HTMLCanvasElement>) => {
+    (e: ReactPointerEvent<HTMLCanvasElement>) => {
       if (!isDragging && !isDraggingImage) return;
       const canvas = canvasRef.current;
       if (!canvas) return;
@@ -465,7 +533,15 @@ export default function WhisperTool() {
   }, [draw]);
 
   const handleReset = useCallback(() => {
+    if (video) {
+      video.pause();
+      URL.revokeObjectURL(video.src);
+    }
     setImage(null);
+    setVideo(null);
+    setVideoPlaying(false);
+    setVideoCurrentTime(0);
+    setVideoDuration(0);
     setCaption('');
     setFontFamily(DEFAULT_FONT);
     setFontWeight(900);
@@ -485,7 +561,7 @@ export default function WhisperTool() {
     setImageOffsetX(0);
     setImageOffsetY(0);
     setImageZoom(1);
-  }, []);
+  }, [video]);
 
   /* ── Tab content renderers ── */
   const renderImagePanel = () => (
@@ -494,12 +570,12 @@ export default function WhisperTool() {
         <label className="block cursor-pointer group">
           <input
             type="file"
-            accept="image/*"
-            onChange={handleImageUpload}
+            accept="image/*,video/mp4,video/webm,video/ogg"
+            onChange={handleMediaUpload}
             className="hidden"
           />
           <div className="border border-dashed border-zinc-800 rounded-xl p-6 text-center transition-all duration-200 group-hover:border-zinc-600 group-hover:bg-zinc-900/30">
-            {image ? (
+            {media ? (
               <div className="flex items-center gap-4 justify-center">
                 <div className="w-10 h-10 rounded-lg bg-zinc-900 border border-zinc-800 flex items-center justify-center">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-emerald-500">
@@ -507,7 +583,9 @@ export default function WhisperTool() {
                   </svg>
                 </div>
                 <div className="text-left">
-                  <p className="text-xs text-zinc-300 font-medium">{image.naturalWidth} &times; {image.naturalHeight}</p>
+                  <p className="text-xs text-zinc-300 font-medium">
+                    {video ? `${video.videoWidth}\u00D7${video.videoHeight} video` : `${image!.naturalWidth}\u00D7${image!.naturalHeight}`}
+                  </p>
                   <p className="text-[10px] text-zinc-600 mt-0.5">Click to replace</p>
                 </div>
               </div>
@@ -518,19 +596,56 @@ export default function WhisperTool() {
                     <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12" />
                   </svg>
                 </div>
-                <p className="text-xs text-zinc-400 font-medium">Drop image or click</p>
-                <p className="text-[10px] text-zinc-600 mt-1">PNG, JPG, WebP</p>
+                <p className="text-xs text-zinc-400 font-medium">Drop image or video</p>
+                <p className="text-[10px] text-zinc-600 mt-1">PNG, JPG, WebP, MP4, WebM</p>
               </>
             )}
           </div>
         </label>
       </Section>
 
+      {/* Video playback controls */}
+      {video && (
+        <Section title="Playback">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={toggleVideoPlay}
+              className="w-9 h-9 rounded-lg bg-zinc-800 hover:bg-zinc-700 flex items-center justify-center transition-colors"
+            >
+              {videoPlaying ? (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="text-white">
+                  <rect x="6" y="4" width="4" height="16" rx="1" />
+                  <rect x="14" y="4" width="4" height="16" rx="1" />
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" className="text-white">
+                  <polygon points="5,3 19,12 5,21" />
+                </svg>
+              )}
+            </button>
+            <div className="flex-1">
+              <input
+                type="range"
+                min={0}
+                max={videoDuration || 0}
+                step={0.01}
+                value={videoCurrentTime}
+                onChange={(e) => seekVideo(Number(e.target.value))}
+                className="slider"
+              />
+            </div>
+            <span className="text-[10px] text-zinc-500 font-mono tabular-nums w-14 text-right">
+              {videoCurrentTime.toFixed(1)}s
+            </span>
+          </div>
+        </Section>
+      )}
+
       <Section title="Fit">
         <ButtonGroup<FitMode> options={FIT_MODES} selected={fitMode} onChange={setFitMode} />
       </Section>
 
-      {image && (
+      {media && (
         <Section title="Transform">
           <Slider label="Zoom" value={imageZoom} display={`${Math.round(imageZoom * 100)}%`} min={0.1} max={5} onChange={setImageZoom} step={0.05} />
           <Slider label="Pan X" value={imageOffsetX} display={String(imageOffsetX)} min={-exportSize} max={exportSize} onChange={setImageOffsetX} />
@@ -583,24 +698,14 @@ export default function WhisperTool() {
           <div className="flex-1 space-y-1.5">
             <span className="text-[10px] text-zinc-600 font-medium uppercase tracking-wider">Fill</span>
             <div className="relative">
-              <input
-                type="color"
-                value={textColor}
-                onChange={(e) => setTextColor(e.target.value)}
-                className="color-input"
-              />
+              <input type="color" value={textColor} onChange={(e) => setTextColor(e.target.value)} className="color-input" />
               <div className="absolute inset-0 rounded-lg border border-zinc-800 pointer-events-none" />
             </div>
           </div>
           <div className="flex-1 space-y-1.5">
             <span className="text-[10px] text-zinc-600 font-medium uppercase tracking-wider">Outline</span>
             <div className="relative">
-              <input
-                type="color"
-                value={outlineColor}
-                onChange={(e) => setOutlineColor(e.target.value)}
-                className="color-input"
-              />
+              <input type="color" value={outlineColor} onChange={(e) => setOutlineColor(e.target.value)} className="color-input" />
               <div className="absolute inset-0 rounded-lg border border-zinc-800 pointer-events-none" />
             </div>
           </div>
@@ -672,7 +777,7 @@ export default function WhisperTool() {
   );
 
   const TABS = [
-    { key: 'image' as const, label: 'Image', icon: 'M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z' },
+    { key: 'image' as const, label: 'Media', icon: 'M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z' },
     { key: 'text' as const, label: 'Text', icon: 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z' },
     { key: 'export' as const, label: 'Export', icon: 'M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4' },
   ];
@@ -705,8 +810,7 @@ export default function WhisperTool() {
                 onPointerUp={handlePointerUp}
               />
 
-              {/* Empty state */}
-              {!image && (
+              {!media && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none rounded-2xl z-20">
                   <div className="text-center">
                     <div className="w-14 h-14 mx-auto mb-4 rounded-2xl bg-zinc-900/80 border border-zinc-800 flex items-center justify-center backdrop-blur-sm">
@@ -716,19 +820,18 @@ export default function WhisperTool() {
                         <path d="M21 15l-5-5L5 21" />
                       </svg>
                     </div>
-                    <p className="text-sm text-zinc-500 font-medium">Upload an image</p>
-                    <p className="text-[10px] text-zinc-700 mt-1">to get started</p>
+                    <p className="text-sm text-zinc-500 font-medium">Upload media</p>
+                    <p className="text-[10px] text-zinc-700 mt-1">image or video</p>
                   </div>
                 </div>
               )}
             </div>
 
-            {/* Status bar */}
             <div className="flex items-center justify-between mt-3 px-1">
               <span className="text-[10px] text-zinc-700 font-mono">
                 {exportSize}&times;{exportSize}
               </span>
-              {image && (
+              {media && (
                 <span className="text-[10px] text-zinc-700">
                   Drag to move &middot; Scroll / pinch to zoom
                 </span>
@@ -737,16 +840,25 @@ export default function WhisperTool() {
           </div>
         </div>
 
-        {/* ─── Sidebar: fixed left on mobile as floating pane, static on desktop ─── */}
-        <aside className="fixed inset-x-0 bottom-0 lg:inset-y-0 lg:left-0 lg:right-auto lg:bottom-auto w-full lg:w-[340px] xl:w-[360px] flex flex-col bg-zinc-950/95 lg:bg-zinc-950 backdrop-blur-xl lg:backdrop-blur-none border-t lg:border-t-0 lg:border-r border-zinc-800/60 lg:border-zinc-900 rounded-t-2xl lg:rounded-none max-h-[70vh] lg:max-h-none z-30 floating-pane-safe">
+        {/* ─── Sidebar: floating pane on mobile, static on desktop ─── */}
+        <aside
+          className="fixed inset-x-0 bottom-0 lg:inset-y-0 lg:left-0 lg:right-auto lg:bottom-auto w-full lg:w-[340px] xl:w-[360px] flex flex-col bg-zinc-950/95 lg:bg-zinc-950 backdrop-blur-xl lg:backdrop-blur-none border-t lg:border-t-0 lg:border-r border-zinc-800/60 lg:border-zinc-900 rounded-t-2xl lg:rounded-none z-30 floating-pane-safe"
+          style={{ height: `${paneHeight}vh` }}
+        >
+          {/* Drag handle — resize on mobile */}
+          <div
+            className="lg:hidden shrink-0 flex items-center justify-center py-2 cursor-ns-resize touch-none"
+            onPointerDown={handlePaneResizeDown}
+          >
+            <div className="w-8 h-1 rounded-full bg-zinc-700" />
+          </div>
+
           {/* Header */}
-          <div className="px-5 pt-4 pb-3 lg:pt-5 lg:pb-4 flex items-center justify-between shrink-0">
+          <div className="px-5 pt-2 pb-3 lg:pt-4 lg:pb-4 shrink-0">
             <div className="flex items-center gap-3">
               <h1 className="text-base font-bold tracking-tight text-white">tf</h1>
               <span className="text-[10px] text-zinc-600 tracking-wide">image macro maker</span>
             </div>
-            {/* Drag handle on mobile */}
-            <div className="lg:hidden w-8 h-1 rounded-full bg-zinc-800 absolute top-2 left-1/2 -translate-x-1/2" />
           </div>
 
           {/* Tab bar */}
